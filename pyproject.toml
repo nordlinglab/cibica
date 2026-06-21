@@ -7,28 +7,41 @@ name = "cibica"
 version = "0.1.0"
 description = "Circle estimation by CIBICA with example datasets."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.9"
 license = {text = "Apache-2.0"}
 authors = [
+    {name = "Esteban Román Catafau", email = "esteban.roman@nordlinglab.org"},
     {name = "Torbjörn E. M. Nordling", email = "t@nordlinglab.org"},
 ]
-keywords = ["machine-learning", "system-identification", "data-analysis"]
+keywords = [
+    "circle estimation",
+    "circle fitting",
+    "gradient-free",
+    "motion blur",
+    "degraded images",
+    "clinical video",
+    "real-time visual computing",
+    "Parkinson's disease",
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Developers",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Image Processing",
 ]
 dependencies = [
-    # Add your dependencies here
+    "numpy>=1.20",
+    "scipy>=1.6",
+    "opencv-python>=4.5",
+    "pandas>=1.2",
+    "matplotlib>=3.3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
-    "pytest-html>=4.0",
     "ruff>=0.3.0",
     "mypy>=1.0",
 ]
@@ -37,13 +50,24 @@ dev = [
 Homepage = "https://github.com/nordlinglab/cibica"
 Repository = "https://github.com/nordlinglab/cibica"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/cibica"]
+
+# Ship the bundled example dataset inside the wheel/sdist even though the files
+# are non-Python (and so that VCS-ignore rules can never strip them).
+[tool.hatch.build]
+artifacts = [
+    "src/cibica/data/**/*.png",
+    "src/cibica/data/**/*.csv",
+]
+
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py39"
 select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_ignores = true
 

@@ -1,0 +1,17 @@
+# Exact dependency versions used to produce the results in
+# "Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"
+# (CIBICA), submitted to The Visual Computer.
+#
+# Python 3.9.23 on macOS arm64 (Apple M4 Max). Reproduce with:
+#     conda env create -f environment.yml      # recommended (pins Python)
+#   OR
+#     pip install -r requirements.lock         # into a Python 3.9 venv
+#
+# See requirements.txt for the loose, forward-compatible ranges.
+matplotlib==3.9.4
+numpy==2.0.2
+opencv-python==4.13.0.92
+pandas==2.3.3
+scikit-learn==1.6.1
+scipy==1.13.1
+tqdm==4.68.2

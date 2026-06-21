@@ -1,0 +1,59 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite both the software (this file) and the
+  associated article. This repository accompanies the manuscript "Robust
+  Gradient-Free Circle Estimation for Motion-Blurred Clinical Video" (CIBICA)
+  submitted to The Visual Computer (Springer). It provides the full
+  experimental pipeline: preprocessing, the proposed method, the baseline
+  implementations, the evaluation and statistical analysis, and the
+  figure-generation scripts needed to reproduce the reported results.
+title: "cibica: Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"
+abstract: >-
+  Reference implementation of CIBICA, a gradient-free combinatorial circle
+  estimation method for low-resolution, motion-blurred clinical video, together
+  with classical and robust baselines (Circle Hough Transform, Randomized Hough
+  Transform, Random Circle Detection, robust algebraic fitting), the 18
+  preprocessing configurations, the Jaccard-based evaluation, the nonparametric
+  statistical comparison, and the scripts that regenerate every figure and
+  table in the accompanying manuscript.
+type: software
+authors:
+  - given-names: Esteban
+    family-names: "Román Catafau"
+    orcid: "https://orcid.org/0000-0001-8502-6485"
+    affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
+  - given-names: "Torbjörn E. M."
+    family-names: Nordling
+    orcid: "https://orcid.org/0000-0003-4867-6707"
+    affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
+    email: torbjorn.nordling@nordlinglab.org
+version: "1.0.0"
+date-released: "2026-06-14"
+license: Apache-2.0
+repository-code: "https://github.com/nordlinglab/cibica"
+# TODO(authors): after minting the Zenodo DOI, uncomment and fill in:
+# doi: "10.5281/zenodo.XXXXXXX"
+# url: "https://doi.org/10.5281/zenodo.XXXXXXX"
+keywords:
+  - robust circle estimation
+  - gradient-free geometric sampling
+  - motion blur
+  - degraded images
+  - clinical video analysis
+  - real-time visual computing
+  - interpretable image analysis
+  - circle fitting
+  - Parkinson's disease
+preferred-citation:
+  type: article
+  title: "Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"
+  authors:
+    - given-names: Esteban
+      family-names: "Román Catafau"
+      orcid: "https://orcid.org/0000-0001-8502-6485"
+    - given-names: "Torbjörn E. M."
+      family-names: Nordling
+      orcid: "https://orcid.org/0000-0003-4867-6707"
+  journal: "The Visual Computer"
+  year: 2026
+  notes: "Manuscript under review."
