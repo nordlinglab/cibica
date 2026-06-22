@@ -22,12 +22,38 @@ The dataset lives in this directory (`data/`), separate from the source code in 
 
 | Path | Contents |
 |------|----------|
-| `Ground_Truth.csv` | Manual ground-truth circle annotations (one row per frame). |
+| `Ground_Truth.csv` | Derived ground-truth circle (`X`, `Y`, `R`) per frame; least-squares fit to the four perimeter points. |
+| `LabeledData.csv` | Raw manual annotations: the four sphere-perimeter points per frame (`x1..x4`, `y1..y4`). |
+| `cohort.csv` | Per-participant cohort label (Parkinson's disease vs healthy control). |
 | `black_sphere_ROI/<name>.png` | Cropped black-sphere region; the circle-estimation input (144 files). |
 | `green_back_ROI/<name>.png` | Cropped green-background sample, used to characterise the background colour (HSV thresholds) for the median-filter configurations (144 files). |
 
 The two image directories share the same 144 filenames; `<name>` matches the
 `Filename` column of `Ground_Truth.csv`, e.g. `879885247_20204249_Feet_R_S_1`.
+
+## Columns (`LabeledData.csv`)
+
+The raw hand-labeled perimeter points from which `Ground_Truth.csv` was derived
+(least-squares circle through the four points), one row per frame.
+
+| Column Name | Data Type | Description |
+|-------------|-----------|-------------|
+| Filename | string | Frame name with a `_Full_BlackSphere_crop.pdf` suffix; strip it to match `Ground_Truth.csv` |
+| x1..x4 | int | Column coordinates of the four perimeter points |
+| y1..y4 | int | Row coordinates of the four perimeter points |
+
+Coordinates are in the **8× up-sampled** frame used for sub-pixel labeling
+(native radii of 9–14 px appear here as 72–112 px), whereas `Ground_Truth.csv`
+reports the circle at native resolution.
+A few rows have a stray space before `_S` in `Filename` (e.g. `Feet_L _S_0`);
+normalise whitespace when joining to the other tables.
+
+## Columns (`cohort.csv`)
+
+| Column Name | Data Type | Description |
+|-------------|-----------|-------------|
+| Filename | string | Frame name; matches the entries in `Ground_Truth.csv` |
+| cohort | string | `PD` (Parkinson's disease) or `control` (healthy) |
 
 ## Columns (`Ground_Truth.csv`)
 

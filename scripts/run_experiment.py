@@ -21,8 +21,10 @@ Usage (from a clone, with the uv-managed environment):
     uv run python scripts/run_experiment.py
 """
 
+import argparse
 import math
 import os
+import random
 import time
 from datetime import date
 
@@ -96,6 +98,9 @@ FIGURES = os.path.join(OUTPUT, "figures")  # images only (.png/.pdf)
 TABLES = os.path.join(OUTPUT, "tables")  # CSV tables only
 
 METHODS = ["CIBICA", "HOUGH", "RHT", "RCD", "QI"]
+# Methods whose output varies from run to run (random sampling). HOUGH and QI
+# are deterministic, so they are never repeated across replicates.
+STOCHASTIC = {"CIBICA", "RHT", "RCD"}
 BEST_GL = ["GL80", "GL82", "GL84"]
 
 # Color palette — colorblind-friendly
@@ -243,9 +248,74 @@ def compute_focal_stats(results, focal="CIBICA"):
 # ============================================================================
 
 
-def run_experiments_with_real_data(n_triplets=500):
+def _estimate_once(method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT):
+    """Run one method once on one frame×config; return (jaccard, elapsed_s).
+
+    Returns (0.0, 0.0) when the method's minimum edge-point precondition is not
+    met, mirroring the zero-initialisation of the result matrices. Timing is
+    measured around the estimator call only (excluding the Jaccard computation).
+    """
+    t0 = time.perf_counter()
+    try:
+        if method == "CIBICA":
+            if len(edgels) < 3:
+                return 0.0, 0.0
+            x, y, r = CIBICA(edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax)
+            elapsed = time.perf_counter() - t0
+            if np.isnan(x) or r <= 0:
+                return 0.0, elapsed
+            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed
+        if method == "HOUGH":
+            # HOUGH receives the binary edge image * 255 per config (not raw
+            # grayscale), so results vary across preprocessing configurations.
+            x, y, r = HOUGH(edge_u8, minDist=300, param2=8, minRadius=5, maxRadius=20)
+            elapsed = time.perf_counter() - t0
+            if x <= 0:
+                return 0.0, elapsed
+            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed
+        if method == "RHT":
+            if len(edgels) < 3:
+                return 0.0, 0.0
+            c, r = rht(edgels, num_iterations=1000, threshold=3)
+            elapsed = time.perf_counter() - t0
+            if r <= 0:
+                return 0.0, elapsed
+            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
+        if method == "RCD":
+            if len(edgels) < 4:
+                return 0.0, 0.0
+            c, r = rcd(
+                edgels,
+                num_iterations=1000,
+                distance_threshold=2,
+                min_inliers=5,
+                min_distance=5,
+            )
+            elapsed = time.perf_counter() - t0
+            if r <= 0:
+                return 0.0, elapsed
+            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
+        if method == "QI":
+            if len(edgels) < 3:
+                return 0.0, 0.0
+            c, r = qi_2024(edgels)
+            elapsed = time.perf_counter() - t0
+            if r <= 0:
+                return 0.0, elapsed
+            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
+    except Exception:
+        return 0.0, time.perf_counter() - t0
+    return 0.0, 0.0
+
+
+def run_experiments_with_real_data(n_triplets=500, replicates=1):
     """
     Run all five methods on 144 frames × 18 preprocessing configs.
+
+    Each stochastic method (CIBICA, RHT, RCD) is run ``replicates`` times per
+    frame×config and the per-cell mean is stored (with the run-to-run standard
+    deviation kept alongside); deterministic methods (HOUGH, QI) are run once.
+    With ``replicates=1`` (default) this matches the original single-run study.
 
     Coordinate convention:
       GT: X=col (horizontal), Y=row (vertical)
@@ -253,7 +323,7 @@ def run_experiments_with_real_data(n_triplets=500):
       HOUGH   → returns (col, row) → jaccard_circles(XGT, YGT, ...)
       RHT/RCD/QI → return (row, col) → jaccard_circles(YGT, XGT, ...)
 
-    Returns dict with Jaccard and timing arrays.
+    Returns dict with per-cell mean Jaccard, run-to-run Jaccard std, and timing.
     """
     ground_truth = pd.read_csv(_DATA / "Ground_Truth.csv")
     filenames = ground_truth["Filename"].tolist()
@@ -263,10 +333,18 @@ def run_experiments_with_real_data(n_triplets=500):
     n_configs = len(configs)
 
     Jaccard = {m: np.zeros((n_images, n_configs)) for m in METHODS}
+    JaccardReplStd = {m: np.zeros((n_images, n_configs)) for m in METHODS}
     Time_s = {m: np.zeros((n_images, n_configs)) for m in METHODS}
+    # Per-replicate, per-config Jaccard/time means over frames (R x n_configs),
+    # needed to report the set of best configs selected across replicates.
+    JaccByRepCfg = {m: np.zeros((replicates, n_configs)) for m in METHODS}
+    TimeByRepCfg = {m: np.zeros((replicates, n_configs)) for m in METHODS}
 
     print(f"Processing {n_images} images × {n_configs} preprocessing configs")
-    print(f"Methods: {', '.join(METHODS)}  (CIBICA n_triplets={n_triplets})")
+    print(
+        f"Methods: {', '.join(METHODS)}  "
+        f"(CIBICA n_triplets={n_triplets}, replicates={replicates})"
+    )
     print("=" * 70)
     t_start = time.time()
 
@@ -310,81 +388,27 @@ def run_experiments_with_real_data(n_triplets=500):
                 else edge_img.astype(np.uint8)
             )
 
-            # ── CIBICA ────────────────────────────────────────────────────────
-            if len(edgels) >= 3:
-                t0 = time.perf_counter()
-                try:
-                    x_c, y_c, r_c = CIBICA(
-                        edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax
+            # Run each method; repeat the stochastic ones `replicates` times and
+            # store the per-cell mean (plus the run-to-run std).
+            for m in METHODS:
+                reps = replicates if m in STOCHASTIC else 1
+                js = np.empty(reps)
+                ts = np.empty(reps)
+                for k in range(reps):
+                    js[k], ts[k] = _estimate_once(
+                        m, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT
                     )
-                    Time_s["CIBICA"][i, j] = time.perf_counter() - t0
-                    if not (np.isnan(x_c) or r_c <= 0):
-                        Jaccard["CIBICA"][i, j] = jaccard_circles(
-                            XGT, YGT, RGT, x_c, y_c, r_c
-                        )
-                except Exception:
-                    Time_s["CIBICA"][i, j] = time.perf_counter() - t0
-
-            # ── HOUGH ─────────────────────────────────────────────────────────
-            # Reference notebook: HOUGH receives the binary edge image * 255 per config
-            # (not raw grayscale), so results vary across preprocessing configurations.
-            t0 = time.perf_counter()
-            try:
-                x_h, y_h, r_h = HOUGH(
-                    edge_u8, minDist=300, param2=8, minRadius=5, maxRadius=20
-                )
-                Time_s["HOUGH"][i, j] = time.perf_counter() - t0
-                if x_h > 0:
-                    Jaccard["HOUGH"][i, j] = jaccard_circles(
-                        XGT, YGT, RGT, x_h, y_h, r_h
-                    )
-            except Exception:
-                Time_s["HOUGH"][i, j] = time.perf_counter() - t0
-
-            # ── RHT ───────────────────────────────────────────────────────────
-            if len(edgels) >= 3:
-                t0 = time.perf_counter()
-                try:
-                    center_rht, r_rht = rht(edgels, num_iterations=1000, threshold=3)
-                    Time_s["RHT"][i, j] = time.perf_counter() - t0
-                    if r_rht > 0:
-                        Jaccard["RHT"][i, j] = jaccard_circles(
-                            YGT, XGT, RGT, center_rht[0], center_rht[1], r_rht
-                        )
-                except Exception:
-                    Time_s["RHT"][i, j] = time.perf_counter() - t0
-
-            # ── RCD ───────────────────────────────────────────────────────────
-            if len(edgels) >= 4:
-                t0 = time.perf_counter()
-                try:
-                    center_rcd, r_rcd = rcd(
-                        edgels,
-                        num_iterations=1000,
-                        distance_threshold=2,
-                        min_inliers=5,
-                        min_distance=5,
-                    )
-                    Time_s["RCD"][i, j] = time.perf_counter() - t0
-                    if r_rcd > 0:
-                        Jaccard["RCD"][i, j] = jaccard_circles(
-                            YGT, XGT, RGT, center_rcd[0], center_rcd[1], r_rcd
-                        )
-                except Exception:
-                    Time_s["RCD"][i, j] = time.perf_counter() - t0
-
-            # ── QI ────────────────────────────────────────────────────────────
-            if len(edgels) >= 3:
-                t0 = time.perf_counter()
-                try:
-                    center_qi, r_qi = qi_2024(edgels)
-                    Time_s["QI"][i, j] = time.perf_counter() - t0
-                    if r_qi > 0:
-                        Jaccard["QI"][i, j] = jaccard_circles(
-                            YGT, XGT, RGT, center_qi[0], center_qi[1], r_qi
-                        )
-                except Exception:
-                    Time_s["QI"][i, j] = time.perf_counter() - t0
+                Jaccard[m][i, j] = js.mean()
+                JaccardReplStd[m][i, j] = js.std() if reps > 1 else 0.0
+                Time_s[m][i, j] = ts.mean()
+                # Accumulate per-replicate per-config frame sums; deterministic
+                # methods broadcast their single value across all replicate slots.
+                if m in STOCHASTIC:
+                    JaccByRepCfg[m][:, j] += js
+                    TimeByRepCfg[m][:, j] += ts
+                else:
+                    JaccByRepCfg[m][:, j] += js[0]
+                    TimeByRepCfg[m][:, j] += ts[0]
 
         if (i + 1) % 20 == 0 or (i + 1) == n_images:
             print(f"  {i + 1}/{n_images} images  ({time.time() - t_start:.1f}s)")
@@ -392,11 +416,20 @@ def run_experiments_with_real_data(n_triplets=500):
     print("=" * 70)
     print(f"Done in {time.time() - t_start:.1f}s")
 
+    # Convert per-replicate per-config frame sums to means over frames.
+    for m in METHODS:
+        JaccByRepCfg[m] /= n_images
+        TimeByRepCfg[m] /= n_images
+
     return {
         **{f"Jaccard_{m}": Jaccard[m] for m in METHODS},
+        **{f"JaccardReplStd_{m}": JaccardReplStd[m] for m in METHODS},
         **{f"Time_{m}": Time_s[m] for m in METHODS},
+        **{f"JaccByRepCfg_{m}": JaccByRepCfg[m] for m in METHODS},
+        **{f"TimeByRepCfg_{m}": TimeByRepCfg[m] for m in METHODS},
         "config_names": [c["name"] for c in configs],
         "filenames": filenames,
+        "replicates": replicates,
     }
 
 
@@ -418,12 +451,85 @@ def save_raw_csvs(results, output_dir="."):
         print(f"  Saved: {path}")
 
 
+def _best_config_stats(results, m):
+    """Best-configuration statistics for method `m`, aggregated over replicates.
+
+    For each replicate the best config is the one with the highest mean Jaccard
+    over the 144 frames. Returns the *set* of configs chosen across replicates
+    (a single name when replicates=1), the mean and run-to-run std of the
+    best-config Jaccard, the over-frames std at the overall-best config, and the
+    mean FPS at each replicate's best config.
+    """
+    cfg_names = results["config_names"]
+    per_rep_cfg = results[f"JaccByRepCfg_{m}"]  # (R, n_configs) mean over frames
+    per_rep_time = results[f"TimeByRepCfg_{m}"]  # (R, n_configs)
+    n_rep = per_rep_cfg.shape[0]
+    best_per_rep = per_rep_cfg.argmax(axis=1)
+    best_j = per_rep_cfg.max(axis=1)  # best mean-Jaccard each replicate
+    best_t = per_rep_time[np.arange(n_rep), best_per_rep]
+    fps_per_rep = np.where(best_t > 0, 1.0 / best_t, 0.0)
+    cfg_set = sorted({cfg_names[c] for c in best_per_rep}, key=cfg_names.index)
+    J = results[f"Jaccard_{m}"]
+    best_overall = int(np.argmax(J.mean(axis=0)))
+    return {
+        "configs": cfg_set,
+        "jaccard_mean": float(best_j.mean()),
+        "jaccard_std": float(J[:, best_overall].std()),
+        "jaccard_repl_std": float(best_j.std()),
+        "fps": float(fps_per_rep.mean()),
+        "all_config_mean": float(J.mean()),
+    }
+
+
 def save_summary_tables(results, output_dir="."):
-    """Three summary views: AllConfigs, BestGL, BestConfig."""
+    """Write paper-numbered tables (T3, T4) plus supporting per-method summaries.
+
+    - Table3_BestConfig  -> paper Table 3 (baseline; each method at its best
+      preprocessing configuration). With replicates>1 ``Best_Config`` is the set
+      of configs selected as best in at least one replicate; Jaccard and FPS are
+      means over replicates and ``Jaccard_repl_std`` is the run-to-run std.
+    - Table4_CrossConfig -> paper Table 4 (best-config mean vs all-config mean).
+    - Summary_AllConfigs / Summary_BestGL -> supporting (not numbered tables in
+      the paper); the GL80/82/84 scores underlie the statistical comparison.
+    """
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    bcs = {m: _best_config_stats(results, m) for m in METHODS}
 
-    # (i) All configs
+    # Paper Table 3 — baseline: each method at its best preprocessing config.
+    rows = [
+        {
+            "Method": m,
+            "Best_Config": ";".join(bcs[m]["configs"]),
+            "Jaccard_mean": round(bcs[m]["jaccard_mean"], 4),
+            "Jaccard_std": round(bcs[m]["jaccard_std"], 4),
+            "Jaccard_repl_std": round(bcs[m]["jaccard_repl_std"], 4),
+            "FPS": round(bcs[m]["fps"], 1),
+        }
+        for m in METHODS
+    ]
+    rows.sort(key=lambda r: -r["Jaccard_mean"])  # sorted by mean Jaccard desc
+    pd.DataFrame(rows).set_index("Method").to_csv(
+        os.path.join(output_dir, f"Table3_BestConfig_{DATE}.csv")
+    )
+    print(f"  Saved: Table3_BestConfig_{DATE}.csv  (paper Table 3)")
+
+    # Paper Table 4 — robustness: best-config mean vs all-config mean.
+    rows = [
+        {
+            "Method": m,
+            "Jaccard_best_config": round(bcs[m]["jaccard_mean"], 4),
+            "Jaccard_all_configs": round(bcs[m]["all_config_mean"], 4),
+        }
+        for m in METHODS
+    ]
+    rows.sort(key=lambda r: -r["Jaccard_all_configs"])  # sorted by all-config mean
+    pd.DataFrame(rows).set_index("Method").to_csv(
+        os.path.join(output_dir, f"Table4_CrossConfig_{DATE}.csv")
+    )
+    print(f"  Saved: Table4_CrossConfig_{DATE}.csv  (paper Table 4)")
+
+    # Supporting: per-method mean over ALL 18 configs.
     rows = []
     for m in METHODS:
         J = results[f"Jaccard_{m}"]
@@ -434,15 +540,16 @@ def save_summary_tables(results, output_dir="."):
                 "Method": m,
                 "Jaccard_mean": round(J.mean(), 4),
                 "Jaccard_std": round(J.std(), 4),
+                "Jaccard_repl_std": round(results[f"JaccardReplStd_{m}"].mean(), 4),
                 "FPS": round(fps, 1),
             }
         )
     pd.DataFrame(rows).set_index("Method").to_csv(
-        os.path.join(output_dir, f"Table_AllConfigs_{DATE}.csv")
+        os.path.join(output_dir, f"Summary_AllConfigs_{DATE}.csv")
     )
-    print(f"  Saved: Table_AllConfigs_{DATE}.csv")
+    print(f"  Saved: Summary_AllConfigs_{DATE}.csv  (supporting)")
 
-    # (ii) GL80/GL82/GL84
+    # Supporting: per-method mean over GL80/GL82/GL84 (scores used by the stats).
     rows = []
     for m in METHODS:
         J = results[f"Jaccard_{m}"][:, best_idx]
@@ -453,34 +560,16 @@ def save_summary_tables(results, output_dir="."):
                 "Method": m,
                 "Jaccard_mean": round(J.mean(), 4),
                 "Jaccard_std": round(J.std(), 4),
+                "Jaccard_repl_std": round(
+                    results[f"JaccardReplStd_{m}"][:, best_idx].mean(), 4
+                ),
                 "FPS": round(fps, 1),
             }
         )
     pd.DataFrame(rows).set_index("Method").to_csv(
-        os.path.join(output_dir, f"Table_BestGL_{DATE}.csv")
+        os.path.join(output_dir, f"Summary_BestGL_{DATE}.csv")
     )
-    print(f"  Saved: Table_BestGL_{DATE}.csv")
-
-    # (iii) Best config per method
-    rows = []
-    for m in METHODS:
-        J = results[f"Jaccard_{m}"]
-        T = results[f"Time_{m}"]
-        best_j = int(np.argmax(J.mean(axis=0)))
-        fps = 1.0 / T[:, best_j].mean() if T[:, best_j].mean() > 0 else 0
-        rows.append(
-            {
-                "Method": m,
-                "Best_Config": cfg_names[best_j],
-                "Jaccard_mean": round(J[:, best_j].mean(), 4),
-                "Jaccard_std": round(J[:, best_j].std(), 4),
-                "FPS": round(fps, 1),
-            }
-        )
-    pd.DataFrame(rows).set_index("Method").to_csv(
-        os.path.join(output_dir, f"Table_BestConfig_{DATE}.csv")
-    )
-    print(f"  Saved: Table_BestConfig_{DATE}.csv")
+    print(f"  Saved: Summary_BestGL_{DATE}.csv  (supporting)")
 
 
 def save_stats_csvs(results, focal_stats, output_dir="."):
@@ -525,6 +614,40 @@ def save_stats_csvs(results, focal_stats, output_dir="."):
         os.path.join(output_dir, f"Stats_Pairwise_{DATE}.csv"), index=False
     )
     print(f"  Saved: Stats_Pairwise_{DATE}.csv")
+    return rows
+
+
+def save_cohort_table(results, output_dir="."):
+    """Paper Table 5: mean Jaccard per cohort on GL80/GL82/GL84, per method.
+
+    Output rows are cohorts and columns are methods; only aggregate means and
+    frame counts are written.
+    """
+    cohort_path = _DATA / "cohort.csv"
+    if not cohort_path.exists():
+        print("  Skipped Table5_Cohort (cohort.csv not found)")
+        return
+    cohort = pd.read_csv(cohort_path)
+    cohort_map = dict(zip(cohort["Filename"], cohort["cohort"]))
+    cfg_names = results["config_names"]
+    best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    groups = np.array(
+        [cohort_map.get(f, "unknown") for f in results["filenames"]]
+    )
+    rows = []
+    for grp in ("PD", "control"):
+        mask = groups == grp
+        if not mask.any():
+            continue
+        row = {"Cohort": grp, "N_frames": int(mask.sum())}
+        for m in METHODS:
+            scores = results[f"Jaccard_{m}"][:, best_idx].mean(axis=1)
+            row[m] = round(float(scores[mask].mean()), 4)
+        rows.append(row)
+    pd.DataFrame(rows).set_index("Cohort").to_csv(
+        os.path.join(output_dir, f"Table5_Cohort_{DATE}.csv")
+    )
+    print(f"  Saved: Table5_Cohort_{DATE}.csv  (paper Table 5)")
     return rows
 
 
@@ -996,10 +1119,26 @@ def plot_jaccard_distance(results, output_dir="."):
 # ============================================================================
 
 
-def print_summary(results):
+def print_summary(results, replicates=1):
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
-    hdr = f"{'Method':<8}  {'Jaccard':>8}  {'Std':>6}  {'FPS':>7}"
+    show_repl = replicates > 1
+    hdr = f"{'Method':<8}  {'Jaccard':>8}  {'Std':>6}  {'FPS':>7}" + (
+        f"  {'ReplStd':>8}" if show_repl else ""
+    )
+
+    print("\n" + "=" * 70)
+    print("NOTE on reproducibility")
+    print("=" * 70)
+    print("CIBICA, RHT and RCD are stochastic: their Jaccard accuracy AND their")
+    print("FPS (timing) vary from run to run. HOUGH and QI are deterministic.")
+    if show_repl:
+        print(f"Values below are means over {replicates} replicates per frame;")
+        print("'ReplStd' is the mean per-frame run-to-run Jaccard std deviation.")
+    else:
+        print("Values below come from a SINGLE run per frame and will differ between")
+        print("runs. Use --replicates N (with --seed for reproducibility) to average")
+        print("over repeats and quantify the run-to-run spread.")
 
     print("\n" + "=" * 70)
     print("(i) Average over ALL 18 preprocessing configs")
@@ -1011,24 +1150,27 @@ def print_summary(results):
         T = results[f"Time_{m}"]
         fps = 1.0 / T.mean() if T.mean() > 0 else 0
         mark = " ★" if m == "CIBICA" else ""
-        print(f"{m:<8}  {J.mean():>8.4f}  {J.std():>6.4f}  {fps:>7.1f}{mark}")
+        extra = f"  {results[f'JaccardReplStd_{m}'].mean():>8.4f}" if show_repl else ""
+        print(f"{m:<8}  {J.mean():>8.4f}  {J.std():>6.4f}  {fps:>7.1f}{extra}{mark}")
     print("=" * 70)
 
     print("\n" + "=" * 70)
-    print("(ii) Best preprocessing config per method")
+    print("(ii) Best preprocessing config per method  [paper Table 3]")
     print("=" * 70)
-    print(f"{'Method':<8}  {'BestCfg':<10}  {'Jaccard':>8}  {'Std':>6}  {'FPS':>7}")
+    bc_hdr = (
+        f"{'Method':<8}  {'BestCfg':<16}  {'Jaccard':>8}  {'Std':>6}  {'FPS':>7}"
+        + (f"  {'ReplStd':>8}" if show_repl else "")
+    )
+    print(bc_hdr)
     print("-" * 70)
     for m in METHODS:
-        J = results[f"Jaccard_{m}"]
-        T = results[f"Time_{m}"]
-        best_j = int(np.argmax(J.mean(axis=0)))
-        fps = 1.0 / T[:, best_j].mean() if T[:, best_j].mean() > 0 else 0
+        s = _best_config_stats(results, m)
         mark = " ★" if m == "CIBICA" else ""
+        extra = f"  {s['jaccard_repl_std']:>8.4f}" if show_repl else ""
         print(
-            f"{m:<8}  {cfg_names[best_j]:<10}  "
-            f"{J[:, best_j].mean():>8.4f}  {J[:, best_j].std():>6.4f}  "
-            f"{fps:>7.1f}{mark}"
+            f"{m:<8}  {';'.join(s['configs']):<16}  "
+            f"{s['jaccard_mean']:>8.4f}  {s['jaccard_std']:>6.4f}  "
+            f"{s['fps']:>7.1f}{extra}{mark}"
         )
     print("=" * 70)
 
@@ -1042,7 +1184,12 @@ def print_summary(results):
         T = results[f"Time_{m}"][:, best_idx]
         fps = 1.0 / T.mean() if T.mean() > 0 else 0
         mark = " ★" if m == "CIBICA" else ""
-        print(f"{m:<8}  {J.mean():>8.4f}  {J.std():>6.4f}  {fps:>7.1f}{mark}")
+        extra = (
+            f"  {results[f'JaccardReplStd_{m}'][:, best_idx].mean():>8.4f}"
+            if show_repl
+            else ""
+        )
+        print(f"{m:<8}  {J.mean():>8.4f}  {J.std():>6.4f}  {fps:>7.1f}{extra}{mark}")
     print("=" * 70)
 
     # Win counts
@@ -1167,24 +1314,32 @@ def run_triplet_fps_sweep():
             f"fps={fps:>7.1f}  J={mean_j:.6f}"
         )
 
-    # Save CSV
+    # Save CSV (paper Table 6, partial: this single-run sweep reports fps and
+    # mean Jaccard but NOT the per-frame 100-run CV / mean-range columns).
     df = pd.DataFrame(rows)
-    csv_path = os.path.join(TABLES, f"TripletSweep_FPS_{DATE}.csv")
+    csv_path = os.path.join(TABLES, f"Table6_TripletSweep_{DATE}.csv")
     df.to_csv(csv_path, index=False)
-    print(f"\n  Saved: {csv_path}")
+    print(f"\n  Saved: {csv_path}  (paper Table 6, partial)")
 
     return rows
 
 
-def main():
+def main(replicates=1, seed=None):
     os.makedirs(FIGURES, exist_ok=True)
     os.makedirs(TABLES, exist_ok=True)
+    if seed is not None:
+        random.seed(seed)
+        np.random.seed(seed)
     print("=" * 70)
     print("CIBICA vs Baselines — Circle Detection (2026 revision)")
     print(f"Methods: {', '.join(METHODS)}")
+    print(
+        f"Replicates per frame: {replicates}"
+        + (f"   (seed={seed})" if seed is not None else "")
+    )
     print("=" * 70)
 
-    results = run_experiments_with_real_data(n_triplets=500)
+    results = run_experiments_with_real_data(n_triplets=500, replicates=replicates)
 
     print("\nSaving tables...")
     save_raw_csvs(results, output_dir=TABLES)
@@ -1193,6 +1348,7 @@ def main():
     print("\nRunning statistical analysis...")
     focal_stats = compute_focal_stats(results, focal="CIBICA")
     pw_rows = save_stats_csvs(results, focal_stats, output_dir=TABLES)
+    save_cohort_table(results, output_dir=TABLES)
 
     print("\nGenerating publication figures...")
     plot_line_configs(results, output_dir=FIGURES)
@@ -1215,7 +1371,7 @@ def main():
     plot_summary_panel(results, output_dir=FIGURES)
     plot_jaccard_distance(results, output_dir=FIGURES)
 
-    print_summary(results)
+    print_summary(results, replicates=replicates)
 
     # Per-method FPS with different n_triplets
     print("\nRunning triplet FPS sweep (CIBICA only)...")
@@ -1223,8 +1379,48 @@ def main():
 
     print(f"\nFigures saved to: {FIGURES}/")
     print(f"Tables saved to:  {TABLES}/")
+    print("\n" + "=" * 70)
+    print("Paper mapping (main.tex)")
+    print("=" * 70)
+    print("  Table3_BestConfig   -> Table 3 (baseline, best config per method)")
+    print("  Table4_CrossConfig  -> Table 4 (best-config vs all-config mean)")
+    print("  Table5_Cohort       -> Table 5 (mean Jaccard by cohort)")
+    print("  Table6_TripletSweep -> Table 6 (triplet sweep; CV/range NOT computed)")
+    print("  Fig1 line plot      -> Fig. jaccard_comparison (mean J vs 18 configs)")
+    print("  Fig3 violin (GL82)  -> Fig. violin_gl82")
+    print("  Fig6 pairwise p-val -> Fig. pairwise_wilcoxon")
+    print("  Stats_*             -> in-text Wilcoxon/HL/CI focal + pairwise")
+    print("  (Table 1 + labeling figures: run scripts/run_labeling_analysis.py)")
+    print("NOT reproduced (reported in the article):")
+    print("  Table 2 parameters, Table 6 CV columns, Table 7 ablation; the")
+    print("  pixel/triplet-combination histogram, N-triplet difference figure,")
+    print("  visual/failure galleries; and the leave-one-subject-out,")
+    print("  permutation, BCa, and beta-regression analyses.")
     print("=" * 70)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(
+        description=(
+            "Reproduce the CIBICA vs baselines study "
+            "(5 methods x 144 frames x 18 configs)."
+        )
+    )
+    parser.add_argument(
+        "--replicates",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "repeat each stochastic method (CIBICA, RHT, RCD) N times per frame "
+            "and report the mean plus run-to-run std (default: 1, fastest)"
+        ),
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="seed the RNG for reproducible stochastic runs (default: unseeded)",
+    )
+    args = parser.parse_args()
+    main(replicates=args.replicates, seed=args.seed)

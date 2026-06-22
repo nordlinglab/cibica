@@ -7,6 +7,15 @@ All notable changes to this dataset will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-06-22
+
+### Added
+- `LabeledData.csv` — the raw four-perimeter-point manual annotations
+  (`x1..x4`, `y1..y4`) from which `Ground_Truth.csv` was derived. Enables the
+  labeling-consistency analysis (paper Table 1) and the labeling-error figures.
+- `cohort.csv` — per-participant cohort label (12 Parkinson's-disease, 6 healthy
+  controls). Enables the subject-level cohort comparison (paper Table 5).
+
 ## [1.1.0] - 2026-06-22
 
 ### Changed
