@@ -1,3 +1,5 @@
+# Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
+# SPDX-License-Identifier: Apache-2.0
 """
 CIBICA: Circle fitting using triplet combinations with median estimation
 
@@ -6,15 +8,15 @@ Reference:
     The median-based approach provides robustness to outliers.
 """
 
-import numpy as np
 import random
 from itertools import combinations
-from scipy.spatial.distance import cdist
+
+import numpy as np
 from scipy import stats
+from scipy.spatial.distance import cdist
 
 
-def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50,
-                   rmin=4, rmax=30, minval=-20):
+def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
     """
     Vectorized circle fitting through triplets of points.
 
@@ -49,7 +51,9 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50,
     temp = p2[:, 0] * p2[:, 0] + p2[:, 1] * p2[:, 1]
     bc = (p1[:, 0] * p1[:, 0] + p1[:, 1] * p1[:, 1] - temp) / 2
     cd = (temp - p3[:, 0] * p3[:, 0] - p3[:, 1] * p3[:, 1]) / 2
-    det = (p1[:, 0] - p2[:, 0]) * (p2[:, 1] - p3[:, 1]) - (p2[:, 0] - p3[:, 0]) * (p1[:, 1] - p2[:, 1])
+    det = (p1[:, 0] - p2[:, 0]) * (p2[:, 1] - p3[:, 1]) - (p2[:, 0] - p3[:, 0]) * (
+        p1[:, 1] - p2[:, 1]
+    )
 
     # Filter 1 — Collinearity: discard if det == 0 (exact)
     zeros = np.where(det == 0)
@@ -86,7 +90,7 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50,
     p1 = np.delete(p1, deletes, 0)
 
     # Filter 3 — Radius range: discard if r < rmin or r > rmax
-    radius = np.sqrt((cx - p1[:, 0])**2 + (cy - p1[:, 1])**2)
+    radius = np.sqrt((cx - p1[:, 0]) ** 2 + (cy - p1[:, 1]) ** 2)
 
     big_radius = np.where(radius > rmax)
     radius = np.delete(radius, big_radius, 0)
@@ -104,14 +108,14 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50,
 def median_3d(x, y, r, xmax=100, ymax=100):
     """
     Calculate median in 3D space (x, y, r) using mode-based approach.
-    
+
     Parameters
     ----------
     x, y, r : numpy.ndarray
         Arrays of circle parameters
     xmax, ymax : int
         Maximum dimensions for encoding
-        
+
     Returns
     -------
     x_out, y_out, r_out : float
@@ -120,27 +124,27 @@ def median_3d(x, y, r, xmax=100, ymax=100):
     X = np.round(np.c_[r, x, y], 0)
     c = np.array([[ymax * xmax], [ymax], [1]])
     identifier = X.dot(c)
-    
+
     data = stats.mode(identifier, keepdims=True)
     mode = int(data.mode.ravel()[0])
-    
+
     y_out = mode % ymax
     aux = (mode - y_out) / ymax
     x_out = aux % xmax
     r_out = (aux - x_out) / xmax
-    
+
     return x_out, y_out, r_out
 
 
 def LS_circle(x, y):
     """
     Least squares circle fitting.
-    
+
     Parameters
     ----------
     x, y : numpy.ndarray
         Coordinates of points on the circle
-        
+
     Returns
     -------
     xc, yc : float
@@ -157,12 +161,20 @@ def LS_circle(x, y):
     X = np.matmul(np.linalg.inv(np.matmul(A.T, A)), np.matmul(A.T, b))
     xc, yc = X[0], X[1]
     r = np.sqrt(X[2] + xc**2 + yc**2)
-    residu = np.sum((np.sqrt((x - xc)**2 + (y - yc)**2) - r)**2)
+    residu = np.sum((np.sqrt((x - xc) ** 2 + (y - yc) ** 2) - r) ** 2)
     return xc, yc, r, residu
 
 
-def CIBICA(coord, n_triplets=500, xmax=50, ymax=50, refinement=True,
-           rmin=4, rmax=30, minval=-20):
+def CIBICA(
+    coord,
+    n_triplets=500,
+    xmax=50,
+    ymax=50,
+    refinement=True,
+    rmin=4,
+    rmax=30,
+    minval=-20,
+):
     """
     Circle detection using CIBICA method.
 
@@ -213,65 +225,71 @@ def CIBICA(coord, n_triplets=500, xmax=50, ymax=50, refinement=True,
     p3 = coord[RandomSample[:, 2]]
 
     # Fit circles
-    cx, cy, radius = vectorized_XYR(p1, p2, p3, xmax, ymax,
-                                    rmin=rmin, rmax=rmax, minval=minval)
-    
+    cx, cy, radius = vectorized_XYR(
+        p1, p2, p3, xmax, ymax, rmin=rmin, rmax=rmax, minval=minval
+    )
+
     # Get median estimate
     XYR = median_3d(cx, cy, radius, xmax, ymax)
-    
+
     if not refinement:
         return XYR[1], XYR[0], XYR[2]  # Return as x, y, r
-    
+
     # Least squares refinement
     coord2 = [(XYR[0], XYR[1])]
-    distances = cdist(coord2, coord)
+    cdist(coord2, coord)
     near = np.where(np.abs(cdist(coord2, coord) - XYR[2]) < 1.5)
     circle_points = coord[near[1]]
-    
+
     if len(circle_points) >= 3:
-        xl, yl, rl, res = np.round(LS_circle(circle_points[:, 0], circle_points[:, 1]), 3)
+        xl, yl, rl, res = np.round(
+            LS_circle(circle_points[:, 0], circle_points[:, 1]), 3
+        )
         return yl, xl, rl  # Return as x, y, r
     else:
         return XYR[1], XYR[0], XYR[2]  # Return as x, y, r
 
+
 if __name__ == "__main__":
     import sys
-    
-    if len(sys.argv) < 2 or sys.argv[1] == 'test':
+
+    if len(sys.argv) < 2 or sys.argv[1] == "test":
         # Run built-in tests
         print("Testing CIBICA")
         print("=" * 60)
-        
+
         # Test 1: Perfect circle
         print("\nTest 1: Perfect circle")
-        theta = np.linspace(0, 2*np.pi, 100)
+        theta = np.linspace(0, 2 * np.pi, 100)
         true_center = (25, 25)
         true_radius = 10
-        edgels = np.column_stack([
-            true_center[0] + true_radius * np.cos(theta),
-            true_center[1] + true_radius * np.sin(theta)
-        ])
-        
+        edgels = np.column_stack(
+            [
+                true_center[0] + true_radius * np.cos(theta),
+                true_center[1] + true_radius * np.sin(theta),
+            ]
+        )
+
         x, y, r = CIBICA(edgels, n_triplets=500, xmax=50, ymax=50)
         print(f"True: center={true_center}, radius={true_radius}")
         print(f"Detected: center=({x:.2f}, {y:.2f}), radius={r:.2f}")
-        error = np.sqrt((x-true_center[0])**2 + (y-true_center[1])**2)
+        error = np.sqrt((x - true_center[0]) ** 2 + (y - true_center[1]) ** 2)
         print(f"Error: {error:.4f} pixels")
-        
+
         # Test 2: Noisy circle
         print("\nTest 2: Noisy circle")
         noise = np.random.randn(100, 2) * 0.5
         edgels_noisy = edgels + noise
-        
+
         x, y, r = CIBICA(edgels_noisy, n_triplets=1000, xmax=50, ymax=50)
         print(f"Detected: center=({x:.2f}, {y:.2f}), radius={r:.2f}")
-        error = np.sqrt((x-true_center[0])**2 + (y-true_center[1])**2)
+        error = np.sqrt((x - true_center[0]) ** 2 + (y - true_center[1]) ** 2)
         print(f"Error: {error:.4f} pixels")
-        
+
         print("\n" + "=" * 60)
         print("Testing complete!")
     else:
         # Load edgels from CSV file
-        edgels = np.loadtxt(sys.argv[1], delimiter=',')
+        edgels = np.loadtxt(sys.argv[1], delimiter=",")
         x, y, r = CIBICA(edgels, n_triplets=10000, xmax=100, ymax=100)
         print(f"center=({x:.2f}, {y:.2f}), radius={r:.2f}")

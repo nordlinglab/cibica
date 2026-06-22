@@ -1,55 +1,67 @@
 ---
 title: "cibica - Data Schema"
 author: "Torbjörn E. M. Nordling"
-date: "2026-06-16"
+date: "2026-06-22"
 license: "Apache-2.0"
 version: 1.0.0
-purpose: "Schema documentation for dataset columns and types."
+purpose: "Schema for the cibica example dataset: ground-truth circle annotations and region-of-interest images."
 ---
 
 # Data Schema
 
 ## Dataset: cibica
 
-## Columns
+The example dataset accompanying *"Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"* (CIBICA).
+A black spherical marker was mounted on the foot as a size reference and recorded during the MDS-UPDRS toe-tapping examination.
+It comprises 144 cropped clinical region-of-interest (ROI) frames from 18 participants (12 with Parkinson's disease, 6 healthy controls): two side-view videos per participant (one per foot, 36 videos total), with four frames extracted per video.
+Each frame carries a manually annotated ground-truth circle marking the sphere.
+
+The dataset lives in this directory (`data/`), separate from the source code in `src/`, and is **not** bundled into the installed Python package.
+
+## Layout
+
+| Path | Contents |
+|------|----------|
+| `Ground_Truth.csv` | Manual ground-truth circle annotations (one row per frame). |
+| `black_sphere_ROI/<name>.png` | Cropped black-sphere region; the circle-estimation input (144 files). |
+| `green_back_ROI/<name>.png` | Cropped green-background sample, used to characterise the background colour (HSV thresholds) for the median-filter configurations (144 files). |
+
+The two image directories share the same 144 filenames; `<name>` matches the
+`Filename` column of `Ground_Truth.csv`, e.g. `879885247_20204249_Feet_R_S_1`.
+
+## Columns (`Ground_Truth.csv`)
 
 | Column Name | Data Type | Description | Example | Missing Values |
 |-------------|-----------|-------------|---------|----------------|
-| id | integer | Unique identifier | 12345 | No |
-| name | string | [Description] | "Example" | No |
-| value | float | [Description] | 123.45 | Yes (0.5%) |
-| category | string | [Description] | "A" | No |
-| timestamp | datetime | [Description] | "2024-01-01 12:00:00" | No |
+| Filename | string | Frame name without extension; matches the `.png` files in both ROI directories | `135258724_20204142_Feet_L_S_0` | No |
+| X | float | Circle centre column (horizontal), in pixels | 21.868421 | No |
+| Y | float | Circle centre row (vertical), in pixels | 20.642516 | No |
+| R | float | Circle radius, in pixels | 11.614217 | No |
 
-## Data Types
+## Coordinate Convention
 
-- **integer**: Whole numbers
-- **float**: Decimal numbers
-- **string**: Text data
-- **datetime**: Date and time in ISO 8601 format
-- **boolean**: True/False values
+- `X` is the column (horizontal) coordinate; `Y` is the row (vertical) coordinate.
+- This matches the `(x_col, y_row, r)` convention returned by `cibica.estimate`,
+  `CIBICA`, and `HOUGH`.
 
-## Categorical Variables
+## Ground truth
 
-### category
-- **A**: [Description]
-- **B**: [Description]
-- **C**: [Description]
+Ground truth was established by manually annotating four points on the sphere perimeter in each frame (single annotator).
+To obtain sub-pixel precision, each cropped sphere image was upsampled by a factor of eight before labeling (native radii of 9–14 px become 72–112 px).
+A circle was then fitted to the perimeter points by least squares;
+`X`, `Y`, and `R` are reported at the native (non-upsampled) resolution, so ground-truth radii span roughly 9–14 px.
+Labeling quality was quantified by a leave-one-out geometric consistency analysis of the annotations (mean Jaccard index 0.964).
 
 ## Units
 
-- **value**: [units, e.g., meters, dollars, etc.]
-
-## Constraints
-
-- All values in `value` column must be non-negative
-- `timestamp` must be within range [start_date, end_date]
-- `category` must be one of {A, B, C}
+- **X, Y, R**: pixels (in the cropped ROI image's coordinate frame).
 
 ## File Format
 
-- **Format**: CSV
-- **Encoding**: UTF-8
-- **Delimiter**: Comma (,)
-- **Header**: Yes (first row)
-- **Null Values**: Represented as empty string or "NA"
+- **Ground_Truth.csv** — UTF-8 CSV, comma-delimited, header in the first row.
+- **Images** — 8-bit PNG (BGR when read with OpenCV).
+
+## Provenance and Redistribution
+
+Frames were extracted from side-view toe-tapping videos acquired under the governing IRB approval.
+The original videos are **not** redistributable; only the cropped sphere ROIs, the green-background samples, and their ground-truth annotations are released here.

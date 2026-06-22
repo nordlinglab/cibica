@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: >-
   If you use this software, please cite both the software (this file) and the
   associated article. This repository accompanies the manuscript "Robust
-  Gradient-Free Circle Estimation for Motion-Blurred Clinical Video" (CIBICA)
+  Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"
   submitted to The Visual Computer (Springer). It provides the full
   experimental pipeline: preprocessing, the proposed method, the baseline
   implementations, the evaluation and statistical analysis, and the
@@ -28,12 +28,11 @@ authors:
     affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
     email: torbjorn.nordling@nordlinglab.org
 version: "1.0.0"
-date-released: "2026-06-14"
+date-released: "2026-06-22"
 license: Apache-2.0
 repository-code: "https://github.com/nordlinglab/cibica"
-# TODO(authors): after minting the Zenodo DOI, uncomment and fill in:
-# doi: "10.5281/zenodo.XXXXXXX"
-# url: "https://doi.org/10.5281/zenodo.XXXXXXX"
+doi: "10.5281/zenodo.20790416"
+url: "https://doi.org/10.5281/zenodo.20790416"
 keywords:
   - robust circle estimation
   - gradient-free geometric sampling

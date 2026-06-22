@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cibica"
-version = "0.1.0"
+version = "1.0.0"
 description = "Circle estimation by CIBICA with example datasets."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -46,25 +46,39 @@ dev = [
     "mypy>=1.0",
 ]
 
+[project.scripts]
+cibica = "cibica.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/nordlinglab/cibica"
 Repository = "https://github.com/nordlinglab/cibica"
+DOI = "https://doi.org/10.5281/zenodo.20790416"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/cibica"]
 
-# Ship the bundled example dataset inside the wheel/sdist even though the files
-# are non-Python (and so that VCS-ignore rules can never strip them).
-[tool.hatch.build]
-artifacts = [
-    "src/cibica/data/**/*.png",
-    "src/cibica/data/**/*.csv",
-]
+# The wheel ships code only. The example dataset is kept separate from the
+# source (in the repository's data/ directory, not in the package) and is
+# obtained by cloning the repository, never bundled into the built artifact.
 
 [tool.ruff]
 line-length = 88
 target-version = "py39"
+
+[tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+# The legacy scientific modules use mathematical matrix notation (e.g. X, N_H),
+# the published public-API function names (CIBICA, HOUGH, LS_circle), and the
+# OpenCV HoughCircles parameter names (minDist, minRadius, ...). Renaming these
+# would break the API or reduce mathematical readability, so the pep8-naming
+# rules N802 (function), N803 (argument) and N806 (local) are scoped out for
+# these files only. New modules (io, estimate, cli) keep full naming checks.
+[tool.ruff.lint.per-file-ignores]
+"src/cibica/core.py" = ["N802", "N803", "N806"]
+"src/cibica/preprocessing.py" = ["N802", "N803", "N806"]
+"src/cibica/baselines/*.py" = ["N802", "N803", "N806"]
+"scripts/run_experiment.py" = ["N802", "N803", "N806"]
 
 [tool.mypy]
 python_version = "3.9"
