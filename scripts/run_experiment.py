@@ -51,6 +51,11 @@ from cibica import (
     rcd,
     rht,
 )
+from cibica.visualization import (
+    plot_pixel_combinations,
+    run_ablation_study,
+    run_triplet_sweep,
+)
 
 # The example dataset lives in the repository's data/ directory, kept separate
 # from the installed package. Resolve it relative to this script so the study
@@ -325,6 +330,9 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
 
     Returns dict with per-cell mean Jaccard, run-to-run Jaccard std, and timing.
     """
+    # Ground_Truth.csv is pass B's ground-truth circle (data/Black_Sphere_Labelling_B.csv
+    # averaged per the digital-updrs method, scale 8); it is the reference that
+    # reproduces the manuscript's Table 3 and all Jaccard-dependent results.
     ground_truth = pd.read_csv(_DATA / "Ground_Truth.csv")
     filenames = ground_truth["Filename"].tolist()
     configs = get_preprocessing_configs()
@@ -339,6 +347,8 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
     # needed to report the set of best configs selected across replicates.
     JaccByRepCfg = {m: np.zeros((replicates, n_configs)) for m in METHODS}
     TimeByRepCfg = {m: np.zeros((replicates, n_configs)) for m in METHODS}
+    # Per-frame edge-pixel count per config (feeds the paper Fig. 11 histogram).
+    edge_counts = np.zeros((n_images, n_configs))
 
     print(f"Processing {n_images} images × {n_configs} preprocessing configs")
     print(
@@ -379,6 +389,8 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
                     )
             except Exception:
                 continue
+
+            edge_counts[i, j] = len(edgels)
 
             # Ensure edge_img is uint8 in [0,255] for HOUGH
             # (matches reference: edgel_frames*255)
@@ -427,6 +439,7 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
         **{f"Time_{m}": Time_s[m] for m in METHODS},
         **{f"JaccByRepCfg_{m}": JaccByRepCfg[m] for m in METHODS},
         **{f"TimeByRepCfg_{m}": TimeByRepCfg[m] for m in METHODS},
+        "edge_counts": edge_counts,
         "config_names": [c["name"] for c in configs],
         "filenames": filenames,
         "replicates": replicates,
@@ -617,11 +630,20 @@ def save_stats_csvs(results, focal_stats, output_dir="."):
     return rows
 
 
+# Paper Table 5 column layout: methods are ordered CIBICA, Qi, RCD, RHT, CHT and
+# the classical Hough column is labelled CHT (Circle Hough Transform), matching
+# the manuscript's tab:subject.
+TABLE5_METHOD_ORDER = ["CIBICA", "QI", "RCD", "RHT", "HOUGH"]
+TABLE5_METHOD_LABELS = {"HOUGH": "CHT"}
+
+
 def save_cohort_table(results, output_dir="."):
     """Paper Table 5: mean Jaccard per cohort on GL80/GL82/GL84, per method.
 
     Output rows are cohorts and columns are methods; only aggregate means and
-    frame counts are written.
+    frame counts are written. Columns follow the manuscript order (HOUGH/QI
+    swapped relative to the internal ``METHODS`` order) and the Hough column is
+    relabelled ``CHT``.
     """
     cohort_path = _DATA / "cohort.csv"
     if not cohort_path.exists():
@@ -631,18 +653,16 @@ def save_cohort_table(results, output_dir="."):
     cohort_map = dict(zip(cohort["Filename"], cohort["cohort"]))
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
-    groups = np.array(
-        [cohort_map.get(f, "unknown") for f in results["filenames"]]
-    )
+    groups = np.array([cohort_map.get(f, "unknown") for f in results["filenames"]])
     rows = []
     for grp in ("PD", "control"):
         mask = groups == grp
         if not mask.any():
             continue
         row = {"Cohort": grp, "N_frames": int(mask.sum())}
-        for m in METHODS:
+        for m in TABLE5_METHOD_ORDER:
             scores = results[f"Jaccard_{m}"][:, best_idx].mean(axis=1)
-            row[m] = round(float(scores[mask].mean()), 4)
+            row[TABLE5_METHOD_LABELS.get(m, m)] = round(float(scores[mask].mean()), 4)
         rows.append(row)
     pd.DataFrame(rows).set_index("Cohort").to_csv(
         os.path.join(output_dir, f"Table5_Cohort_{DATE}.csv")
@@ -657,7 +677,7 @@ def save_cohort_table(results, output_dir="."):
 
 
 def plot_line_configs(results, output_dir="."):
-    """Fig 1 — Line plot: mean Jaccard vs 18 preprocessing configs."""
+    """Fig 12 — Line plot: mean Jaccard vs 18 preprocessing configs."""
     cfg_names = results["config_names"]
     n_cfg = len(cfg_names)
     x = np.arange(n_cfg)
@@ -704,13 +724,16 @@ def plot_line_configs(results, output_dir="."):
     )
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig1_Jaccard_AllConfigs_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"Fig12_Jaccard_AllConfigs_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig1_Jaccard_AllConfigs_{DATE}.png/pdf")
+    print(f"  Saved: Fig12_Jaccard_AllConfigs_{DATE}.png/pdf")
 
 
 def plot_heatmap_method_config(results, output_dir="."):
-    """Fig 2 — Heatmap: methods × configs (annotated Jaccard values)."""
+    """FigS1 — Heatmap: methods × configs (annotated Jaccard values).
+
+    Supplementary diagnostic; not a numbered figure in the paper.
+    """
     cfg_names = results["config_names"]
     n_meth = len(METHODS)
     n_cfg = len(cfg_names)
@@ -762,13 +785,26 @@ def plot_heatmap_method_config(results, output_dir="."):
     ax.grid(False)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig2_Heatmap_MethodxConfig_{DATE}{ext}"))
+        plt.savefig(
+            os.path.join(output_dir, f"FigS1_Heatmap_MethodxConfig_{DATE}{ext}")
+        )
     plt.close()
-    print(f"  Saved: Fig2_Heatmap_MethodxConfig_{DATE}.png/pdf")
+    print(f"  Saved: FigS1_Heatmap_MethodxConfig_{DATE}.png/pdf")
 
 
-def plot_violin(results, config_label, cfg_idx_list, output_dir=".", fig_tag="GL82"):
-    """Violin + strip + median plot for given config indices."""
+def plot_violin(
+    results,
+    config_label,
+    cfg_idx_list,
+    output_dir=".",
+    fig_tag="GL82",
+    fig_label="Fig13",
+):
+    """Violin + strip + median plot for given config indices.
+
+    The GL82 view is paper Fig. 13 (``fig_label='Fig13'``); other config sets
+    are supplementary diagnostics (``fig_label='FigS2'``).
+    """
     data = [results[f"Jaccard_{m}"][:, cfg_idx_list].mean(axis=1) for m in METHODS]
     n = len(METHODS)
 
@@ -823,13 +859,18 @@ def plot_violin(results, config_label, cfg_idx_list, output_dir=".", fig_tag="GL
     ax.legend(handles=patches, loc="lower right", ncol=len(METHODS), fontsize=9)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig3_Violin_{fig_tag}_{DATE}{ext}"))
+        plt.savefig(
+            os.path.join(output_dir, f"{fig_label}_Violin_{fig_tag}_{DATE}{ext}")
+        )
     plt.close()
-    print(f"  Saved: Fig3_Violin_{fig_tag}_{DATE}.png/pdf")
+    print(f"  Saved: {fig_label}_Violin_{fig_tag}_{DATE}.png/pdf")
 
 
 def plot_focal_stats(focal_stats, output_dir="."):
-    """Fig 4 — Lollipop: CIBICA vs each baseline, HL ± 95% CI."""
+    """FigS3 — Lollipop: CIBICA vs each baseline, HL ± 95% CI.
+
+    Supplementary diagnostic; not a numbered figure in the paper.
+    """
     n = len(focal_stats)
     methods = [r["Baseline"] for r in focal_stats]
     hls = [r["HL"] for r in focal_stats]
@@ -876,13 +917,16 @@ def plot_focal_stats(focal_stats, output_dir="."):
     ax.set_xlim(xlims)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig4_Stats_FocalTest_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS3_Stats_FocalTest_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig4_Stats_FocalTest_{DATE}.png/pdf")
+    print(f"  Saved: FigS3_Stats_FocalTest_{DATE}.png/pdf")
 
 
 def plot_fps(results, output_dir="."):
-    """Fig 5 — Horizontal bar: FPS per method (GL80/GL82/GL84 average)."""
+    """FigS4 — Horizontal bar: FPS per method (GL80/GL82/GL84 average).
+
+    Supplementary diagnostic; not a numbered figure in the paper.
+    """
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
 
@@ -931,13 +975,13 @@ def plot_fps(results, output_dir="."):
     ax.set_axisbelow(True)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig5_FPS_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS4_FPS_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig5_FPS_{DATE}.png/pdf")
+    print(f"  Saved: FigS4_FPS_{DATE}.png/pdf")
 
 
 def plot_pairwise_heatmap(pw_rows, output_dir="."):
-    """Fig 6 — Pairwise Wilcoxon p-value heatmap with significance stars."""
+    """Fig 14 — Pairwise Wilcoxon p-value heatmap with significance stars."""
     n = len(METHODS)
     pmat = np.ones((n, n))
     for row in pw_rows:
@@ -982,13 +1026,16 @@ def plot_pairwise_heatmap(pw_rows, output_dir="."):
     ax.grid(False)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig6_Pairwise_Wilcoxon_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"Fig14_Pairwise_Wilcoxon_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig6_Pairwise_Wilcoxon_{DATE}.png/pdf")
+    print(f"  Saved: Fig14_Pairwise_Wilcoxon_{DATE}.png/pdf")
 
 
 def plot_summary_panel(results, output_dir="."):
-    """Fig 7 — Summary panel: Jaccard + FPS side by side."""
+    """FigS5 — Summary panel: Jaccard + FPS side by side.
+
+    Supplementary diagnostic; not a numbered figure in the paper.
+    """
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
     n_meth = len(METHODS)
@@ -1071,13 +1118,16 @@ def plot_summary_panel(results, output_dir="."):
 
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig7_Summary_Panel_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS5_Summary_Panel_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig7_Summary_Panel_{DATE}.png/pdf")
+    print(f"  Saved: FigS5_Summary_Panel_{DATE}.png/pdf")
 
 
 def plot_jaccard_distance(results, output_dir="."):
-    """Fig 8 — Jaccard Distance (1 − J) vs preprocessing configs (lower = better)."""
+    """FigS6 — Jaccard Distance (1 − J) vs preprocessing configs (lower = better).
+
+    Supplementary diagnostic; not a numbered figure in the paper.
+    """
     cfg_names = results["config_names"]
     n_cfg = len(cfg_names)
     x = np.arange(n_cfg)
@@ -1109,9 +1159,9 @@ def plot_jaccard_distance(results, output_dir="."):
     ax.legend(ncol=len(METHODS), fontsize=9.5, loc="upper left")
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig8_JaccardDistance_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS6_JaccardDistance_{DATE}{ext}"))
     plt.close()
-    print(f"  Saved: Fig8_JaccardDistance_{DATE}.png/pdf")
+    print(f"  Saved: FigS6_JaccardDistance_{DATE}.png/pdf")
 
 
 # ============================================================================
@@ -1175,7 +1225,7 @@ def print_summary(results, replicates=1):
     print("=" * 70)
 
     print("\n" + "=" * 70)
-    print("(iii) Mean over GL80, GL82, GL84 (Table 1 style)")
+    print("(iii) Mean over GL80, GL82, GL84 (reference green-level configs)")
     print("=" * 70)
     print(hdr)
     print("-" * 70)
@@ -1209,122 +1259,7 @@ def print_summary(results, replicates=1):
 # ============================================================================
 
 
-def run_triplet_fps_sweep():
-    """
-    Run CIBICA-only with different n_triplets values and report per-method FPS.
-
-    Reuses the full pipeline but only varies n_triplets for CIBICA.
-    Other methods run once (with the first n_triplets run) since they don't
-    depend on n_triplets.
-    """
-    N_TRIPLETS_LIST = [500, 1000, 2000, 5000, 10000]
-
-    print("\n" + "=" * 70)
-    print("Triplet sweep — CIBICA FPS per n_triplets")
-    print("=" * 70)
-
-    # Precompute data shared across runs
-    ground_truth = pd.read_csv(_DATA / "Ground_Truth.csv")
-    filenames = ground_truth["Filename"].tolist()
-    configs = get_preprocessing_configs()
-    n_images = len(filenames)
-    n_configs = len(configs)
-
-    # Precompute edgels and images
-    print(f"Precomputing edgels for {n_images} images × {n_configs} configs...")
-    precomputed = []
-    for i, filename in enumerate(filenames):
-        XGT = ground_truth.iloc[i]["X"]
-        YGT = ground_truth.iloc[i]["Y"]
-        RGT = ground_truth.iloc[i]["R"]
-
-        BS_crop = cv2.imread(
-            os.path.join(str(_DATA), "black_sphere_ROI", filename + ".png")
-        )
-        G_crop = cv2.imread(
-            os.path.join(str(_DATA), "green_back_ROI", filename + ".png")
-        )
-        if BS_crop is None:
-            continue
-
-        xmax = BS_crop.shape[1]
-        ymax = BS_crop.shape[0]
-
-        for j, cfg in enumerate(configs):
-            try:
-                if cfg["green_level"] is not None:
-                    _, _, edgels = preprocess_green_level(BS_crop, cfg["green_level"])
-                else:
-                    _, _, edgels = preprocess_median_filter(
-                        BS_crop, G_crop, cfg["median_size"]
-                    )
-            except Exception:
-                continue
-
-            if len(edgels) >= 3:
-                precomputed.append(
-                    {
-                        "edgels": edgels,
-                        "xmax": xmax,
-                        "ymax": ymax,
-                        "XGT": XGT,
-                        "YGT": YGT,
-                        "RGT": RGT,
-                        "i": i,
-                        "j": j,
-                    }
-                )
-
-    n_calls = len(precomputed)
-    print(f"  {n_calls} valid edgel sets\n")
-
-    rows = []
-    for n_trip in N_TRIPLETS_LIST:
-        t_start = time.perf_counter()
-        jaccards = []
-
-        for d in precomputed:
-            try:
-                x_c, y_c, r_c = CIBICA(
-                    d["edgels"], n_triplets=n_trip, xmax=d["xmax"], ymax=d["ymax"]
-                )
-                if not (np.isnan(x_c) or r_c <= 0):
-                    jaccards.append(
-                        jaccard_circles(d["XGT"], d["YGT"], d["RGT"], x_c, y_c, r_c)
-                    )
-                else:
-                    jaccards.append(0.0)
-            except Exception:
-                jaccards.append(0.0)
-
-        elapsed = time.perf_counter() - t_start
-        fps = n_calls / elapsed
-        mean_j = np.mean(jaccards)
-
-        rows.append(
-            {
-                "n_triplets": n_trip,
-                "time_s": round(elapsed, 2),
-                "fps": round(fps, 1),
-                "mean_jaccard": round(mean_j, 6),
-            }
-        )
-        print(
-            f"  n_triplets={n_trip:>5d}  time={elapsed:>6.2f}s  "
-            f"fps={fps:>7.1f}  J={mean_j:.6f}"
-        )
-
-    # Save CSV (paper Table 6, partial: this single-run sweep reports fps and
-    # mean Jaccard but NOT the per-frame 100-run CV / mean-range columns).
-    df = pd.DataFrame(rows)
-    csv_path = os.path.join(TABLES, f"Table6_TripletSweep_{DATE}.csv")
-    df.to_csv(csv_path, index=False)
-    print(f"\n  Saved: {csv_path}  (paper Table 6, partial)")
-
-    return rows
-
-
-def main(replicates=1, seed=None):
+def main(replicates=1, seed=None, full=False, supplementary=False):
     os.makedirs(FIGURES, exist_ok=True)
     os.makedirs(TABLES, exist_ok=True)
     if seed is not None:
@@ -1351,51 +1286,92 @@ def main(replicates=1, seed=None):
     save_cohort_table(results, output_dir=TABLES)
 
     print("\nGenerating publication figures...")
-    plot_line_configs(results, output_dir=FIGURES)
-    plot_heatmap_method_config(results, output_dir=FIGURES)
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    # Main-text figures (always produced).
+    plot_line_configs(results, output_dir=FIGURES)
     plot_violin(
         results,
         "GL82",
         [cfg_names.index("GL82")] if "GL82" in cfg_names else [0],
         output_dir=FIGURES,
         fig_tag="GL82",
+        fig_label="Fig13",
     )
-    plot_violin(
-        results, "GL80/GL82/GL84", best_idx, output_dir=FIGURES, fig_tag="BestGL"
-    )
-    plot_focal_stats(focal_stats, output_dir=FIGURES)
-    plot_fps(results, output_dir=FIGURES)
     plot_pairwise_heatmap(pw_rows, output_dir=FIGURES)
-    plot_summary_panel(results, output_dir=FIGURES)
-    plot_jaccard_distance(results, output_dir=FIGURES)
+
+    # Supplementary diagnostics (FigS1-FigS6) — only under --supplementary.
+    if supplementary:
+        print("Generating supplementary figures (FigS1-FigS6)...")
+        plot_heatmap_method_config(results, output_dir=FIGURES)
+        plot_violin(
+            results,
+            "GL80/GL82/GL84",
+            best_idx,
+            output_dir=FIGURES,
+            fig_tag="BestGL",
+            fig_label="FigS2",
+        )
+        plot_focal_stats(focal_stats, output_dir=FIGURES)
+        plot_fps(results, output_dir=FIGURES)
+        plot_summary_panel(results, output_dir=FIGURES)
+        plot_jaccard_distance(results, output_dir=FIGURES)
+
+    # Paper Fig. 11 — edge pixels and triplet combinations per frame. Uses GL82:
+    # at this reference config the majority of frames have < 100k triplet
+    # combinations while a few exceed 1,000,000, matching the manuscript text.
+    fig11_idx = cfg_names.index("GL82") if "GL82" in cfg_names else 0
+    plot_pixel_combinations(
+        results["edge_counts"][:, fig11_idx], output_dir=FIGURES, date_tag=DATE
+    )
 
     print_summary(results, replicates=replicates)
 
-    # Per-method FPS with different n_triplets
-    print("\nRunning triplet FPS sweep (CIBICA only)...")
-    run_triplet_fps_sweep()
+    # Paper Table 6 + Fig. 17 (CIBICA accuracy/variability vs triplet count at
+    # GL80). The range/CV columns and Fig. 17 need repeated runs per frame, so
+    # --full sets the run count to --replicates (the paper uses 100).
+    sweep_runs = replicates if full else 1
+    print("\nRunning triplet sweep at GL80 (paper Table 6 / Fig. 17)...")
+    run_triplet_sweep(
+        _DATA,
+        runs=sweep_runs,
+        table_dir=TABLES,
+        fig_dir=FIGURES,
+        date_tag=DATE,
+        make_fig=full,
+    )
+
+    # Paper Table 7 (component ablation) — only under --full (extra CIBICA runs).
+    if full:
+        print("\nRunning ablation study (paper Table 7)...")
+        run_ablation_study(_DATA, table_dir=TABLES, date_tag=DATE)
 
     print(f"\nFigures saved to: {FIGURES}/")
     print(f"Tables saved to:  {TABLES}/")
     print("\n" + "=" * 70)
-    print("Paper mapping (main.tex)")
+    print("Paper mapping")
     print("=" * 70)
     print("  Table3_BestConfig   -> Table 3 (baseline, best config per method)")
     print("  Table4_CrossConfig  -> Table 4 (best-config vs all-config mean)")
-    print("  Table5_Cohort       -> Table 5 (mean Jaccard by cohort)")
-    print("  Table6_TripletSweep -> Table 6 (triplet sweep; CV/range NOT computed)")
-    print("  Fig1 line plot      -> Fig. jaccard_comparison (mean J vs 18 configs)")
-    print("  Fig3 violin (GL82)  -> Fig. violin_gl82")
-    print("  Fig6 pairwise p-val -> Fig. pairwise_wilcoxon")
+    print("  Table5_Cohort       -> Table 5 (mean Jaccard by cohort; CHT column)")
+    print("  Table6_TripletSweep -> Table 6 (triplet sweep; mean range & mean CV)")
+    print("  Table7_Ablation     -> Table 7 (component ablation; --full only)")
+    print("  Fig11 pixel-count   -> Fig. 11 (edge pixels & triplet combinations)")
+    print("  Fig12 line plot     -> Fig. 12 (mean Jaccard vs 18 configs)")
+    print("  Fig13 violin (GL82) -> Fig. 13 (per-frame Jaccard at GL82)")
+    print("  Fig14 pairwise p-val-> Fig. 14 (pairwise Wilcoxon)")
+    print("  Fig17 triplet diff  -> Fig. 17 (Jaccard vs 10k triplets; --full only)")
     print("  Stats_*             -> in-text Wilcoxon/HL/CI focal + pairwise")
-    print("  (Table 1 + labeling figures: run scripts/run_labeling_analysis.py)")
-    print("NOT reproduced (reported in the article):")
-    print("  Table 2 parameters, Table 6 CV columns, Table 7 ablation; the")
-    print("  pixel/triplet-combination histogram, N-triplet difference figure,")
-    print("  visual/failure galleries; and the leave-one-subject-out,")
-    print("  permutation, BCa, and beta-regression analyses.")
+    print("  FigS1-FigS6         -> supplementary diagnostics (--supplementary only)")
+    print("  (Table 1 + Fig. 7 & 8: run scripts/run_labeling_analysis.py)")
+    print("\nComplete reproduction of the heavy artefacts (Table 6 range/CV,")
+    print("Fig. 17, Table 7) needs repeated CIBICA runs per frame:")
+    print("  uv run python scripts/run_experiment.py --full --replicates 100")
+    print("(--replicates also averages the main 5-method experiment, so expect a")
+    print(" multi-hour run; add --seed for reproducible stochastic output.)")
+    print("NOT reproduced (reported in the paper):")
+    print("  Table 2 parameters; visual/failure galleries (Fig. 15 & 16); and the")
+    print("  leave-one-subject-out, permutation, BCa, and beta-regression analyses.")
     print("=" * 70)
 
 
@@ -1422,5 +1398,29 @@ if __name__ == "__main__":
         default=None,
         help="seed the RNG for reproducible stochastic runs (default: unseeded)",
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "enable the heavy extra reproductions: the ablation study (Table 7), "
+            "the non-zero run-to-run range/CV columns of Table 6, and Fig. 17. "
+            "The triplet sweep then repeats CIBICA --replicates times per frame "
+            "(use --replicates 100 to match the paper)"
+        ),
+    )
+    parser.add_argument(
+        "--supplementary",
+        action="store_true",
+        help=(
+            "also generate the supplementary diagnostic figures FigS1-FigS6 "
+            "(heatmap, best-GL violin, focal-test lollipop, FPS bar, summary "
+            "panel, Jaccard distance); omitted by default"
+        ),
+    )
     args = parser.parse_args()
-    main(replicates=args.replicates, seed=args.seed)
+    main(
+        replicates=args.replicates,
+        seed=args.seed,
+        full=args.full,
+        supplementary=args.supplementary,
+    )

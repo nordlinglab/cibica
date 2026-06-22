@@ -90,15 +90,52 @@ x, y, r = cibica.estimate("image.jpg", method="cibica", n_triplets=1000)
 
 ## Reproducing the study
 
+The study spans two scripts — **run both** to reproduce the full set of paper artefacts:
+
 ```bash
 uv venv --python 3.9.23
-uv pip install -e . -r requirements.lock   # cibica + exact pinned dependencies
-uv run python scripts/run_experiment.py    # 5 methods x 144 frames x 18 configs
+uv pip install -e . -r requirements.lock        # cibica + exact pinned dependencies
+uv run python scripts/run_experiment.py         # method comparison: Tables 3-7, Figs. 11-14, 17
+uv run python scripts/run_labeling_analysis.py  # labeling consistency: Table 1, Figs. 7 & 8
 ```
 
+- `run_experiment.py` runs the five methods on 144 frames x 18 preprocessing
+  configurations, producing paper Tables 3-6 and Figs. 11-14. The supplementary
+  diagnostic figures `FigS1`-`FigS6` (not numbered in the paper) are produced
+  only when `--supplementary` is given.
+- `run_labeling_analysis.py` quantifies the manual ground-truth labeling
+  consistency, producing paper Table 1 and Figs. 7 & 8. The labelling pass is
+  chosen with `--labelling {A,B}` and **defaults to B**
+  (`data/Black_Sphere_Labelling_B.csv`); pass `--labelling A`
+  to analyse `data/Black_Sphere_Labelling_A.csv` instead.
+
+To also emit the supplementary diagnostic figures (heatmap, best-GL violin,
+focal-test lollipop, FPS bar, summary panel, and Jaccard distance):
+
+```bash
+uv run python scripts/run_experiment.py --supplementary
+```
+
+The heavy reproductions — the non-zero run-to-run range/CV values of Table 6,
+Fig. 17, and the ablation study (Table 7) — need CIBICA repeated many times per
+frame and are gated behind `--full`, with `--replicates` setting the run count
+(the paper uses 100):
+
+```bash
+uv run python scripts/run_experiment.py --full --replicates 100 --seed 42
+```
+
+`--replicates` also averages the main five-method experiment, so a full run takes
+several hours. Table 6 always carries its `mean_range` and `mean_CV` columns;
+without `--full` they are present but zero (no run-to-run spread at a single run).
+The reusable figure/table generators live in `cibica.visualization` (one module
+per artefact) so either script can call them.
+
 All outputs are written under **`./results/`** (created in the current working directory):
-the CSV tables (`Jaccard_*`, `Table_*`, `Stats_*`, `TripletSweep_FPS`) in `results/tables/`,
-and the figures (`Fig1`–`Fig8`, each as `.png` and `.pdf`) in `results/figures/`.
+the CSV tables (`Jaccard_*`, `Table*`, `Stats_*`) in `results/tables/`,
+and the figures in `results/figures/`, each as `.png` and `.pdf`.
+Figure files are named by their paper number (`Fig7`, `Fig8`, `Fig11`–`Fig14`, `Fig17`);
+supplementary diagnostics carry an `S` prefix (`FigS1`–`FigS6`) and are written only under `--supplementary`.
 Results were produced on an Apple Mac Studio (M4 Max), single-machine CPU with NumPy;
 the bootstrap uses a fixed seed (42).
 
@@ -112,7 +149,7 @@ only the cropped sphere ROIs, the green-background samples, and their annotation
 ## Citation
 
 If you use this software or dataset, please cite both the software and the article — machine-readable metadata is in `CITATION.cff`.
-The archived v1.0.0 release is on Zenodo: [doi:10.5281/zenodo.20790416](https://doi.org/10.5281/zenodo.20790416).
+The archived v1.2.0 release is on Zenodo: [doi:10.5281/zenodo.20790416](https://doi.org/10.5281/zenodo.20790416).
 
 ## License
 

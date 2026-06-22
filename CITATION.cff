@@ -27,7 +27,7 @@ authors:
     orcid: "https://orcid.org/0000-0003-4867-6707"
     affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
     email: torbjorn.nordling@nordlinglab.org
-version: "1.0.0"
+version: "1.2.0"
 date-released: "2026-06-22"
 license: Apache-2.0
 repository-code: "https://github.com/nordlinglab/cibica"
