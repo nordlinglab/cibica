@@ -1,0 +1,42 @@
+{
+  "upload_type": "software",
+  "title": "cibica: Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video",
+  "description": "Reference implementation of CIBICA, a gradient-free combinatorial circle estimation method for low-resolution, motion-blurred clinical video, together with classical and robust baselines (Circle Hough Transform, Randomized Hough Transform, Random Circle Detection, robust algebraic fitting), the 18 preprocessing configurations, the Jaccard-based evaluation, the nonparametric statistical comparison, and the scripts that regenerate every figure and table in the accompanying manuscript.",
+  "access_right": "open",
+  "license": "Apache-2.0",
+  "creators": [
+    {
+      "name": "Román Catafau, Esteban",
+      "orcid": "0000-0001-8502-6485",
+      "affiliation": "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
+    },
+    {
+      "name": "Nordling, Torbjörn E. M.",
+      "orcid": "0000-0003-4867-6707",
+      "affiliation": "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
+    }
+  ],
+  "keywords": [
+    "robust circle estimation",
+    "gradient-free geometric sampling",
+    "motion blur",
+    "degraded images",
+    "clinical video analysis",
+    "real-time visual computing",
+    "interpretable image analysis",
+    "circle fitting",
+    "Parkinson's disease"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "10.5281/zenodo.20790416",
+      "relation": "isNewVersionOf",
+      "scheme": "doi"
+    },
+    {
+      "identifier": "https://github.com/nordlinglab/cibica",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ]
+}
