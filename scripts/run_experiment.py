@@ -330,9 +330,10 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
 
     Returns dict with per-cell mean Jaccard, run-to-run Jaccard std, and timing.
     """
-    # Ground_Truth.csv is pass B's ground-truth circle (data/Black_Sphere_Labelling_B.csv
-    # averaged per the digital-updrs method, scale 8); it is the reference that
-    # reproduces the manuscript's Table 3 and all Jaccard-dependent results.
+    # Ground_Truth.csv is pass B's ground-truth circle
+    # (data/Black_Sphere_Labelling_B.csv averaged per the digital-updrs method,
+    # scale 8); it is the reference that reproduces the manuscript's Table 3 and
+    # all Jaccard-dependent results.
     ground_truth = pd.read_csv(_DATA / "Ground_Truth.csv")
     filenames = ground_truth["Filename"].tolist()
     configs = get_preprocessing_configs()

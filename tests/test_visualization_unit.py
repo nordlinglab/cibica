@@ -157,7 +157,10 @@ def test_plot_error_histogram_writes_files(tmp_path):
     errors = rng.normal(0.0, 1.0, size=200)  # signed residuals
     ratios = errors / 10.0
     paths = plot_error_histogram(
-        errors, ratios, output_dir=str(tmp_path), date_tag="unit",
+        errors,
+        ratios,
+        output_dir=str(tmp_path),
+        date_tag="unit",
         progress=lambda *_: None,
     )
     assert len(paths) == 2
@@ -169,7 +172,9 @@ def test_plot_jaccard_distribution_writes_files(tmp_path):
     rng = np.random.default_rng(0)
     jaccards = np.clip(rng.beta(20, 1.0, size=300), 0.0, 1.0)
     paths = plot_jaccard_distribution(
-        jaccards, output_dir=str(tmp_path), date_tag="unit",
+        jaccards,
+        output_dir=str(tmp_path),
+        date_tag="unit",
         progress=lambda *_: None,
     )
     assert len(paths) == 2
@@ -182,7 +187,10 @@ def test_plot_jaccard_difference_writes_files_and_zero_reference(tmp_path):
     rng = np.random.default_rng(0)
     mean_j = {n: 0.9 + rng.normal(0, 0.001, size=30) for n in n_list}
     paths = plot_jaccard_difference(
-        mean_j, n_list, output_dir=str(tmp_path), date_tag="unit",
+        mean_j,
+        n_list,
+        output_dir=str(tmp_path),
+        date_tag="unit",
         progress=lambda *_: None,
     )
     assert len(paths) == 2

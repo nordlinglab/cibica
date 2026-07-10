@@ -3,9 +3,10 @@
 # (CIBICA), submitted to The Visual Computer.
 #
 # Python 3.9.23 on macOS arm64 (Apple M4 Max). Reproduce with uv:
-#     uv venv --python 3.9.23
-#     uv pip install -e . -r requirements.lock
-#     uv run python scripts/run_experiment.py
+#     uv venv --python 3.9.23                                          # creates the environment and pins the interpreter
+#     uv pip install -e . -r requirements.lock                         # cibica + exact pinned dependencies
+#     uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-14, 17
+#     uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling consistency: Table 1, Figs. 7 & 8
 #
 # See pyproject.toml for the loose, forward-compatible dependency ranges.
 matplotlib==3.9.4

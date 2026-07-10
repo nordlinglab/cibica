@@ -93,10 +93,10 @@ x, y, r = cibica.estimate("image.jpg", method="cibica", n_triplets=1000)
 The study spans two scripts — **run both** to reproduce the full set of paper artefacts:
 
 ```bash
-uv venv --python 3.9.23
-uv pip install -e . -r requirements.lock        # cibica + exact pinned dependencies
-uv run python scripts/run_experiment.py         # method comparison: Tables 3-7, Figs. 11-14, 17
-uv run python scripts/run_labeling_analysis.py  # labeling consistency: Table 1, Figs. 7 & 8
+uv venv --python 3.9.23                                          # creates the environment and pins the interpreter
+uv pip install -e . -r requirements.lock                         # cibica + exact pinned dependencies
+uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-14, 17
+uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling consistency: Table 1, Figs. 7 & 8
 ```
 
 - `run_experiment.py` runs the five methods on 144 frames x 18 preprocessing
@@ -108,6 +108,14 @@ uv run python scripts/run_labeling_analysis.py  # labeling consistency: Table 1,
   chosen with `--labelling {A,B}` and **defaults to B**
   (`data/Black_Sphere_Labelling_B.csv`); pass `--labelling A`
   to analyse `data/Black_Sphere_Labelling_A.csv` instead.
+  Adding **`--compare-passes`** (recommended) additionally reports the
+  **inter-rater** disagreement between the two passes — radius, centre distance,
+  and Jaccard index per frame. The two passes were labelled on different crops,
+  so each is placed in original video-frame coordinates first, using the
+  `crop_origin_x`, `crop_origin_y`, and `scale` columns of the labelling CSVs.
+  This is the honest ground-truth uncertainty (mean Jaccard 0.9492), as opposed
+  to the single-pass leave-one-out self-consistency of Table 1 (mean 0.9582),
+  which cannot capture disagreement between annotators.
 
 To also emit the supplementary diagnostic figures (heatmap, best-GL violin,
 focal-test lollipop, FPS bar, summary panel, and Jaccard distance):
