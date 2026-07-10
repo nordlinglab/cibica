@@ -109,13 +109,16 @@ uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling cons
   (`data/Black_Sphere_Labelling_B.csv`); pass `--labelling A`
   to analyse `data/Black_Sphere_Labelling_A.csv` instead.
   Adding **`--compare-passes`** (recommended) additionally reports the
-  **inter-rater** disagreement between the two passes — radius, centre distance,
-  and Jaccard index per frame. The two passes were labelled on different crops,
-  so each is placed in original video-frame coordinates first, using the
-  `crop_origin_x`, `crop_origin_y`, and `scale` columns of the labelling CSVs.
-  This is the honest ground-truth uncertainty (mean Jaccard 0.9492), as opposed
-  to the single-pass leave-one-out self-consistency of Table 1 (mean 0.9582),
-  which cannot capture disagreement between annotators.
+  **repeat-labeling** disagreement between the two passes — radius, centre
+  distance, and Jaccard index per frame. The two passes were labelled on
+  different crops, so each is placed in original video-frame coordinates first,
+  using the `crop_origin_x`, `crop_origin_y`, and `scale` columns of the
+  labelling CSVs. This is the honest ground-truth uncertainty (mean Jaccard
+  0.9492), as opposed to the single-pass leave-one-out self-consistency of
+  Table 1 (mean 0.9582), which cannot capture disagreement between two labelings
+  of the same frame. Both passes were made by the same annotator, so this is
+  test–retest (intra-annotator) repeatability rather than inter-rater agreement;
+  true inter-annotator reliability can only be lower.
 
 To also emit the supplementary diagnostic figures (heatmap, best-GL violin,
 focal-test lollipop, FPS bar, summary panel, and Jaccard distance):

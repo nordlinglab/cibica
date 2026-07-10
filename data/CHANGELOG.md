@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Black_Sphere_Labelling_{A,B}.csv` — the origin of each frame's crop box in
   original video-frame coordinates, and the zoom factor applied before labeling.
   They let the two passes be mapped into a common coordinate frame, which
-  enables the inter-rater agreement between them to be calculated.
+  enables the repeat-labeling agreement between them to be calculated.
   The point columns are unchanged.
 
 ## [1.2.0] - 2026-06-22

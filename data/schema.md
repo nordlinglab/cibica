@@ -64,7 +64,7 @@ image (pass A at `scale` 10, pass B at 8).
 
 The origin and scale place both passes in the **original video-frame**
 coordinates, `x_frame = crop_origin_x + x_i / scale`, which is what allows the
-inter-rater agreement between the two passes to be calculated.
+repeat-labeling agreement between the two passes to be calculated.
 Each pass was labeled on its own crop, so without the origin their coordinates
 are not comparable.
 Dividing by `scale` alone gives the ROI coordinates that `Ground_Truth.csv` uses.

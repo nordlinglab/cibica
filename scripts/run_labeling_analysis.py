@@ -27,8 +27,8 @@ extremum against a per-frame one.
 
 Outputs (under ./results/):
   tables/Table1_LabelingConsistency.csv   paper Table 1: Jaccard by percentile,
-                                          intra-rater (pooled, 576 comparisons);
-                                          + inter-rater column, also pooled over
+                                          self-consistency (pooled, 576);
+                                          + repeat-labeling column, also pooled
                                           576, under --compare-passes
   figures/Fig8_JaccardDistribution.*      paper Fig. 8: PDF + CDF of the Jaccards
                                           (pooled, 576 comparisons)
@@ -41,7 +41,7 @@ Outputs (under ./results/):
   (stdout only)                           first preprint radius statistics
                                           (per-frame, 144 frames)
   (stdout only, --compare-passes)         paper Table 1 caption
-  (stdout only, --compare-passes)         A-vs-B inter-rater disagreement
+  (stdout only, --compare-passes)         A-vs-B repeat-labeling disagreement
                                           (per-frame, 144 frames)
 
 Usage (from a clone, with the uv-managed environment):
@@ -301,8 +301,13 @@ def _reference_circles(labelling, frame_coordinates=False):
     return _frame_ids(df), np.array(circles, dtype=float)
 
 
-def compute_interrater_consistency(labelling=DEFAULT_LABELLING):
-    """Pooled inter-rater Jaccard, the cross-pass twin of the Table 1 column.
+def compute_repeat_labeling_consistency(labelling=DEFAULT_LABELLING):
+    """Pooled repeat-labeling Jaccard, the cross-pass twin of the Table 1 column.
+
+    Both labelling passes were produced by the same annotator, so this is
+    test-retest (intra-annotator) repeatability across sessions, not agreement
+    between different annotators; it is called repeat labeling, not inter-rater,
+    for that reason. True inter-annotator reliability can only be lower.
 
     Built exactly like :func:`compute_labeling_consistency`'s ``jaccards`` --- the
     same four leave-one-out three-point circles of ``labelling``, on each of the
@@ -352,7 +357,7 @@ def compute_interrater_consistency(labelling=DEFAULT_LABELLING):
 
 
 def compute_pass_disagreement():
-    """Inter-rater disagreement between labelling A and labelling B per frame.
+    """Repeat-labeling disagreement between labelling A and labelling B per frame.
 
     Frames are matched by identifier, not by row order. For each frame the
     four-point least-squares reference circle of each pass is formed, both are
@@ -404,15 +409,15 @@ def compute_pass_disagreement():
 
 
 def print_pass_disagreement(disagreement):
-    """Print the A-vs-B inter-rater disagreement table to stdout (no CSV).
+    """Print the A-vs-B repeat-labeling disagreement table to stdout (no CSV).
 
     Statistics are PER-FRAME: one comparison per frame, reduced across the 144
     frames, so an extremum identifies the worst-disagreeing frame.
     """
     n = len(disagreement)
-    print(f"\nInter-rater disagreement, labelling A vs B over {n} frames:")
+    print(f"\nRepeat-labeling disagreement, labelling A vs B over {n} frames:")
     print("  (both passes placed in video-frame coordinates via their crop")
-    print("   origins, so centre and Jaccard are the true inter-rater values)")
+    print("   origins, so centre and Jaccard are the true repeat-labeling values)")
     print("  Aggregation: PER-FRAME — one comparison per frame, then")
     print(f"  Min/Mean/Median/Max across the {n} frames. A Max here is the")
     print("  worst-disagreeing frame.")
@@ -489,11 +494,11 @@ TABLE1_CAPTION = (
     "labeling consistency, over 576 comparisons between three-point candidate "
     "circles and least-squares reference circles: on each of the 144 frames, "
     "the four leave-one-out three-point circles are compared to a four-point "
-    "reference circle. The intra-rater column takes that reference from the "
-    "same labeling pass, the inter-rater column from a second independent pass, "
-    "both mapped into original video-frame coordinates. Inter-rater agreement "
-    "is the lower at every percentile, so it, not self-consistency, bounds the "
-    "uncertainty of the ground truth."
+    "reference circle. The self-consistency column takes that reference from "
+    "the same labeling pass, the repeat-labeling column from a second "
+    "independent pass, both mapped into original video-frame coordinates. "
+    "Repeat-labeling agreement is the lower at every percentile, so it, not "
+    "self-consistency, bounds the uncertainty of the ground truth."
 )
 
 
@@ -504,12 +509,13 @@ def _wrap_caption(caption, width=70, indent="  "):
     )
 
 
-def save_table1(jaccards, interrater_jaccards=None, output_dir="."):
+def save_table1(jaccards, repeat_jaccards=None, output_dir="."):
     """Paper Table 1 — Jaccard index at the manuscript's reported percentiles.
 
-    Writes ``Percentile_pct`` and ``Jaccard_index`` (the intra-rater
-    labeling-consistency distribution), and, when ``interrater_jaccards`` is
-    given, ``Jaccard_interrater`` from :func:`compute_interrater_consistency`.
+    Writes ``Percentile_pct`` and ``Jaccard_index`` (the self-consistency
+    distribution of one pass), and, when ``repeat_jaccards`` is given,
+    ``Jaccard_repeat_labeling`` from
+    :func:`compute_repeat_labeling_consistency`.
 
     Both columns are pooled over the same 576 leave-one-out candidate circles
     and differ only in which pass supplies the reference circle, so a row is a
@@ -521,12 +527,12 @@ def save_table1(jaccards, interrater_jaccards=None, output_dir="."):
         "Percentile_pct": TABLE1_PERCENTILES,
         "Jaccard_index": [round(float(v), 3) for v in values],
     }
-    if interrater_jaccards is not None:
-        inter = np.percentile(interrater_jaccards, TABLE1_PERCENTILES)
-        columns["Jaccard_interrater"] = [round(float(v), 3) for v in inter]
+    if repeat_jaccards is not None:
+        inter = np.percentile(repeat_jaccards, TABLE1_PERCENTILES)
+        columns["Jaccard_repeat_labeling"] = [round(float(v), 3) for v in inter]
     df = pd.DataFrame(columns)
     df.to_csv(os.path.join(output_dir, "Table1_LabelingConsistency.csv"), index=False)
-    extra = "" if interrater_jaccards is None else " + inter-rater"
+    extra = "" if repeat_jaccards is None else " + repeat labeling"
     print(
         f"  Saved: Table1_LabelingConsistency.csv  "
         f"(paper Table 1, {int(jaccards.size)} comparisons{extra})"
@@ -541,10 +547,10 @@ def main(labelling=DEFAULT_LABELLING, compare_passes=False):
     print(f"Manual-labeling consistency analysis — pass {labelling}")
     print("=" * 70)
     jaccards, errors, ratios = compute_labeling_consistency(labelling)
-    # The inter-rater column references the other pass, so it exists only when
+    # The repeat-labeling column references the other pass, so it exists only
     # the passes are being compared.
-    interrater = compute_interrater_consistency(labelling) if compare_passes else None
-    table1 = save_table1(jaccards, interrater_jaccards=interrater, output_dir=TABLES)
+    repeat = compute_repeat_labeling_consistency(labelling) if compare_passes else None
+    table1 = save_table1(jaccards, repeat_jaccards=repeat, output_dir=TABLES)
     plot_jaccard_distribution(jaccards, output_dir=FIGURES)
     plot_error_histogram(errors, ratios, output_dir=FIGURES)
     print(f"\nLabeling consistency over {jaccards.size} comparisons:")
@@ -560,12 +566,12 @@ def main(labelling=DEFAULT_LABELLING, compare_passes=False):
         f"  above Jaccard {JACCARD_THRESHOLD:g} = {above:.2f}% "
         f"({n_above}/{jaccards.size} comparisons)"
     )
-    if "Jaccard_interrater" in table1.columns:
-        print("\n  Percentile (%)   Jaccard index   Jaccard inter-rater")
+    if "Jaccard_repeat_labeling" in table1.columns:
+        print("\n  Percentile (%)   Jaccard index   Jaccard repeat labeling")
         for pct, val, inter in zip(
             table1["Percentile_pct"],
             table1["Jaccard_index"],
-            table1["Jaccard_interrater"],
+            table1["Jaccard_repeat_labeling"],
         ):
             print(f"  {pct:>10}   {val:>13.3f}   {inter:>18.3f}")
         # The caption describes both columns, so it is only meaningful here.
@@ -605,7 +611,7 @@ if __name__ == "__main__":
         "--compare-passes",
         action="store_true",
         help=(
-            "additionally report the inter-rater (A vs B) disagreement per "
+            "additionally report the repeat-labeling (A vs B) disagreement per "
             "frame: radius, centre distance, and Jaccard index"
         ),
     )
