@@ -138,7 +138,8 @@ def test_radius_statistics_first_preprint():
     """First preprint's radius table: pass B radii (/8) match the published values."""
     if not (DATA_DIR / "Black_Sphere_Labelling_B.csv").is_file():
         pytest.skip("data/Black_Sphere_Labelling_B.csv not present")
-    assert rla.LABELLING_SCALE["B"] == 8  # digital-updrs scale
+    # Scale comes from the data, not a hard-coded table; B is at digital-updrs 8.
+    assert set(rla.read_labelling("B")["scale"]) == {8}
     avg, std, rel = rla.compute_radius_statistics("B")
     assert avg.size == 144
     # Average radius (px): Min/Mean/Max from the manuscript's radius table.
