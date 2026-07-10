@@ -1,9 +1,9 @@
 ---
 title: "cibica - Data Schema"
 author: "Torbjörn E. M. Nordling"
-date: "2026-06-22"
+date: "2026-07-10"
 license: "Apache-2.0"
-version: 1.0.0
+version: 1.1.0
 purpose: "Schema for the cibica example dataset: ground-truth circle annotations and region-of-interest images."
 ---
 
@@ -47,6 +47,27 @@ Coordinates are in the **8× up-sampled** frame used for sub-pixel labeling
 reports the circle at native resolution.
 A few rows have a stray space before `_S` in `Filename` (e.g. `Feet_L _S_0`);
 normalise whitespace when joining to the other tables.
+
+## Columns (`Black_Sphere_Labelling_{A,B}.csv`)
+
+The two manual labeling passes, one row per frame.
+`x1..x4`, `y1..y4` are the four perimeter points in each pass's zoomed labeling
+image (pass A at `scale` 10, pass B at 8).
+
+| Column Name | Data Type | Description |
+|-------------|-----------|-------------|
+| Frame_ID (A) / Labelled_Image (B) | string | Frame identifier |
+| x1..x4, y1..y4 | int | The four perimeter points, in zoomed labeling pixels |
+| crop_origin_x | int | Crop box's left edge, in original video-frame pixels |
+| crop_origin_y | int | Crop box's top edge, in original video-frame pixels |
+| scale | int | Zoom factor applied to the crop before labeling |
+
+The origin and scale place both passes in the **original video-frame**
+coordinates, `x_frame = crop_origin_x + x_i / scale`, which is what allows the
+inter-rater agreement between the two passes to be calculated.
+Each pass was labeled on its own crop, so without the origin their coordinates
+are not comparable.
+Dividing by `scale` alone gives the ROI coordinates that `Ground_Truth.csv` uses.
 
 ## Columns (`cohort.csv`)
 
