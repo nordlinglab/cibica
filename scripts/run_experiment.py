@@ -52,7 +52,9 @@ from cibica import (
     rht,
 )
 from cibica.visualization import (
+    plot_failure_gallery,
     plot_pixel_combinations,
+    plot_visual_comparison,
     run_ablation_study,
     run_triplet_sweep,
 )
@@ -1326,6 +1328,12 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
         results["edge_counts"][:, fig11_idx], output_dir=FIGURES, date_tag=DATE
     )
 
+    # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT at GL80; CIBICA
+    # vs Qi et al. failure gallery at GL82). Runs CIBICA + one baseline on all
+    # 144 frames at a single config each, independent of the main 5x18 sweep.
+    plot_visual_comparison(_DATA, output_dir=FIGURES, date_tag=DATE)
+    plot_failure_gallery(_DATA, output_dir=FIGURES, date_tag=DATE)
+
     print_summary(results, replicates=replicates)
 
     # Paper Table 6 + Fig. 17 (CIBICA accuracy/variability vs triplet count at
@@ -1361,6 +1369,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     print("  Fig12 line plot     -> Fig. 12 (mean Jaccard vs 18 configs)")
     print("  Fig13 violin (GL82) -> Fig. 13 (per-frame Jaccard at GL82)")
     print("  Fig14 pairwise p-val-> Fig. 14 (pairwise Wilcoxon)")
+    print("  Visual comparison   -> Fig. 15 (CIBICA vs CHT, 4 frames at GL80)")
+    print("  Failure gallery     -> Fig. 16 (CIBICA vs Qi et al., GL82)")
     print("  Fig17 triplet diff  -> Fig. 17 (Jaccard vs 10k triplets; --full only)")
     print("  Stats_*             -> in-text Wilcoxon/HL/CI focal + pairwise")
     print("  FigS1-FigS6         -> supplementary diagnostics (--supplementary only)")
@@ -1371,8 +1381,9 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     print("(--replicates also averages the main 5-method experiment, so expect a")
     print(" multi-hour run; add --seed for reproducible stochastic output.)")
     print("NOT reproduced (reported in the paper):")
-    print("  Table 2 parameters; visual/failure galleries (Fig. 15 & 16); and the")
-    print("  leave-one-subject-out, permutation, BCa, and beta-regression analyses.")
+    print("  Table 2 parameters, and the leave-one-subject-out, permutation, BCa,")
+    print("  and beta-regression analyses. Figs. 15/16 are reproduced but frame")
+    print("  selection is a ranking, so the exact frames may differ run to run.")
     print("=" * 70)
 
 

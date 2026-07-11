@@ -15,6 +15,8 @@ only what they need:
   (CIBICA accuracy/variability across triplet counts).
 - :mod:`cibica.visualization.ablation` --- paper Table 7
   (component ablation: refinement and consensus).
+- :mod:`cibica.visualization.qualitative` --- paper Figs. 15 and 16
+  (visual comparison gallery and failure-case gallery).
 
 The modules are deliberately data-driven (they take a ``data_dir`` and write to
 an ``output_dir``) so both ``run_experiment.py`` and ``run_labeling_analysis.py``
@@ -27,6 +29,10 @@ from cibica.visualization.jaccard_distribution import plot_jaccard_distribution
 from cibica.visualization.pixel_combinations import (
     compute_edge_counts,
     plot_pixel_combinations,
+)
+from cibica.visualization.qualitative import (
+    plot_failure_gallery,
+    plot_visual_comparison,
 )
 from cibica.visualization.triplet_sweep import (
     plot_jaccard_difference,
@@ -41,4 +47,6 @@ __all__ = [
     "run_triplet_sweep",
     "plot_jaccard_difference",
     "run_ablation_study",
+    "plot_visual_comparison",
+    "plot_failure_gallery",
 ]
