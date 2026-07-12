@@ -8,4 +8,4 @@ def test_import():
     """Test that the package can be imported"""
     import cibica
 
-    assert cibica.__version__ == "1.2.0"
+    assert cibica.__version__ == "1.3.0"

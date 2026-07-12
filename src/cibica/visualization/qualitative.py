@@ -12,8 +12,15 @@ overlaying CIBICA and the robust algebraic baseline of Qi et al. (2024): the
 top row shows CIBICA's worst frames, the bottom row shows the frames where Qi
 et al. outperforms CIBICA by the widest margin.
 
-Both figures draw the ground truth as a green dashed circle and each method's
-estimate as a solid circle, following the manuscript's caption colour scheme.
+Both figures draw the ground truth as a dashed circle and each method's
+estimate as a solid circle via the shared :mod:`cibica.draw` module, as
+resolution-independent vector patches over a pixel-exact image, so the PDF
+output stays sharp at any zoom. All
+circle colours default to ColorBrewer Set1 qualitative colours ranked by
+CIELAB contrast against the mean image colour inside and outside the first
+estimated circle (:func:`cibica.draw.select_overlay_colors`); the ground
+truth gets the most contrasting colour. Callers may override the defaults
+via the ``colors`` (estimates) and ``gt_color`` (ground truth) arguments.
 Frame selection is a ranking over the whole dataset (worst/best Jaccard, or
 largest inter-method gap), not a hand-picked list, so a different CIBICA run
 (it is stochastic) may select a slightly different frame at the margin.
@@ -30,14 +37,9 @@ import pandas as pd
 from cibica.baselines.hough import HOUGH
 from cibica.baselines.qi import qi_2024
 from cibica.core import CIBICA
+from cibica.draw import overlay_axes, resolve_overlay_colors
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
 from cibica.visualization._common import jaccard_circles
-
-# BGR colours (OpenCV drawing convention), matching the manuscript captions.
-_GT_BGR = (60, 200, 60)  # green, drawn dashed
-_CIBICA_BGR = (180, 119, 31)  # blue  (matches run_experiment.py COLORS["CIBICA"])
-_CHT_BGR = (40, 39, 214)  # red    (matches run_experiment.py COLORS["HOUGH"])
-_QI_BGR = (0, 140, 255)  # orange (per Fig. 16 caption; distinct from CIBICA/GT)
 
 
 def _config(name):
@@ -45,47 +47,6 @@ def _config(name):
     if cfg is None or cfg["green_level"] is None:
         raise ValueError(f"{name!r} is not a green-level configuration")
     return cfg["green_level"]
-
-
-def _draw_dashed_circle(canvas, x, y, r, color, thickness=2, dash_deg=12, gap_deg=10):
-    """Draw a circle as alternating dash/gap arcs (OpenCV has no dashed style)."""
-    angle = 0.0
-    while angle < 360.0:
-        cv2.ellipse(
-            canvas,
-            (round(x), round(y)),
-            (round(r), round(r)),
-            0,
-            angle,
-            min(angle + dash_deg, 360.0),
-            color,
-            thickness,
-        )
-        angle += dash_deg + gap_deg
-
-
-def _draw_overlay(image, ground_truth, estimates):
-    """Draw the ground truth (dashed) and each method's estimate (solid).
-
-    Args:
-        image: source BGR image for one frame.
-        ground_truth: ``(x, y, r)`` ground-truth circle.
-        estimates: list of ``(x, y, r, color_bgr)`` solid overlays, drawn in
-            order so later entries are painted on top.
-
-    Returns:
-        The RGB canvas ready for ``matplotlib`` ``imshow``.
-    """
-    canvas = image.copy()
-    if canvas.ndim == 2:
-        canvas = cv2.cvtColor(canvas, cv2.COLOR_GRAY2BGR)
-    xg, yg, rg = ground_truth
-    _draw_dashed_circle(canvas, xg, yg, rg, _GT_BGR, thickness=1)
-    for x, y, r, color in estimates:
-        if np.isnan(x) or np.isnan(y) or np.isnan(r) or r <= 0:
-            continue
-        cv2.circle(canvas, (round(x), round(y)), max(1, round(r)), color, 1)
-    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
 
 
 def _estimate_cibica(edgels, xmax, ymax, n_triplets=500):
@@ -183,7 +144,14 @@ def _score_cibica_vs_qi(data_dir, ground_truth, config_name, seed):
 
 
 def plot_visual_comparison(
-    data_dir, output_dir=".", date_tag="", config_name="GL80", seed=42, progress=print
+    data_dir,
+    output_dir=".",
+    date_tag="",
+    config_name="GL80",
+    seed=42,
+    colors=None,
+    gt_color=None,
+    progress=print,
 ):
     """Paper Fig. 15 --- CIBICA vs CHT on four representative frames.
 
@@ -200,6 +168,13 @@ def plot_visual_comparison(
             the manuscript).
         seed: RNG seed for CIBICA's triplet sampling, so frame selection is
             reproducible.
+        colors: optional sequence of two BGR tuples for the (CIBICA, CHT)
+            overlays.
+        gt_color: optional BGR tuple for the dashed ground-truth circle.
+            Whichever of ``colors``/``gt_color`` is omitted is auto-selected
+            once, on the first panel's frame, for CIELAB contrast against the
+            mean colour inside and outside its CIBICA estimate, and reused on
+            every panel so the colours stay consistent across the figure.
         progress: callable used for status output (defaults to ``print``).
 
     Returns:
@@ -216,22 +191,31 @@ def plot_visual_comparison(
     case_idx = typical_idx + challenging_idx
     case_labels = ["A", "B", "C", "D"]
 
+    first = scores.loc[case_idx[0]]
+    colors, gt_color = resolve_overlay_colors(
+        _load_frame(data_dir, first["Filename"]),
+        (first["x_cibica"], first["y_cibica"], first["r_cibica"]),
+        2,
+        colors,
+        gt_color,
+    )
+
     fig, axes = plt.subplots(1, 4, figsize=(14, 4))
     for ax, idx, label in zip(axes, case_idx, case_labels):
         row = scores.loc[idx]
         gt = ground_truth.loc[ground_truth["Filename"] == row["Filename"]].iloc[0]
         image = _load_frame(data_dir, row["Filename"])
-        canvas = _draw_overlay(
+        overlay_axes(
+            ax,
             image,
-            (gt["X"], gt["Y"], gt["R"]),
             [
-                (row["x_cibica"], row["y_cibica"], row["r_cibica"], _CIBICA_BGR),
-                (row["x_cht"], row["y_cht"], row["r_cht"], _CHT_BGR),
+                (row["x_cibica"], row["y_cibica"], row["r_cibica"]),
+                (row["x_cht"], row["y_cht"], row["r_cht"]),
             ],
+            ground_truth=(gt["X"], gt["Y"], gt["R"]),
+            colors=colors,
+            gt_color=gt_color,
         )
-        ax.imshow(canvas, interpolation="bilinear")
-        ax.set_xticks([])
-        ax.set_yticks([])
         ax.set_title(f"Case {label}", fontsize=11, fontweight="bold")
         ax.set_xlabel(
             f"CIBICA J={row['j_cibica']:.3f}\nCHT J={row['j_cht']:.3f}", fontsize=9
@@ -239,24 +223,26 @@ def plot_visual_comparison(
     fig.tight_layout()
 
     os.makedirs(output_dir, exist_ok=True)
-    suffix = f"-{date_tag}" if date_tag else ""
+    suffix = f"_{date_tag}" if date_tag else ""
     paths = []
     for ext in (".png", ".pdf"):
-        path = os.path.join(
-            output_dir, f"roman2026-roman-2025-visual-comparison{suffix}{ext}"
-        )
-        fig.savefig(path)
+        path = os.path.join(output_dir, f"Fig15_VisualComparison{suffix}{ext}")
+        fig.savefig(path, dpi=300)
         paths.append(path)
     plt.close(fig)
-    progress(
-        f"  Saved: roman2026-roman-2025-visual-comparison{suffix}.png/pdf  "
-        "(paper Fig. 15)"
-    )
+    progress(f"  Saved: Fig15_VisualComparison{suffix}.png/pdf  (paper Fig. 15)")
     return paths
 
 
 def plot_failure_gallery(
-    data_dir, output_dir=".", date_tag="", config_name="GL82", seed=42, progress=print
+    data_dir,
+    output_dir=".",
+    date_tag="",
+    config_name="GL82",
+    seed=42,
+    colors=None,
+    gt_color=None,
+    progress=print,
 ):
     """Paper Fig. 16 --- failure-case gallery at GL82 (CIBICA vs Qi et al.).
 
@@ -273,6 +259,13 @@ def plot_failure_gallery(
             the manuscript).
         seed: RNG seed for CIBICA's triplet sampling, so frame selection is
             reproducible.
+        colors: optional sequence of two BGR tuples for the (CIBICA, Qi)
+            overlays.
+        gt_color: optional BGR tuple for the dashed ground-truth circle.
+            Whichever of ``colors``/``gt_color`` is omitted is auto-selected
+            once, on the first panel's frame, for CIELAB contrast against the
+            mean colour inside and outside its CIBICA estimate, and reused on
+            every panel so the colours stay consistent across the figure.
         progress: callable used for status output (defaults to ``print``).
 
     Returns:
@@ -287,40 +280,44 @@ def plot_failure_gallery(
     qi_wins_idx = gap.sort_values(ascending=False).index[:4].tolist()
     row_idx = [worst_idx, qi_wins_idx]
 
+    first = scores.loc[worst_idx[0]]
+    colors, gt_color = resolve_overlay_colors(
+        _load_frame(data_dir, first["Filename"]),
+        (first["x_cibica"], first["y_cibica"], first["r_cibica"]),
+        2,
+        colors,
+        gt_color,
+    )
+
     fig, axes = plt.subplots(2, 4, figsize=(14, 7.5))
     for row_axes, idx_list in zip(axes, row_idx):
         for ax, idx in zip(row_axes, idx_list):
             row = scores.loc[idx]
             gt = ground_truth.loc[ground_truth["Filename"] == row["Filename"]].iloc[0]
             image = _load_frame(data_dir, row["Filename"])
-            canvas = _draw_overlay(
+            overlay_axes(
+                ax,
                 image,
-                (gt["X"], gt["Y"], gt["R"]),
                 [
-                    (row["x_cibica"], row["y_cibica"], row["r_cibica"], _CIBICA_BGR),
-                    (row["x_qi"], row["y_qi"], row["r_qi"], _QI_BGR),
+                    (row["x_cibica"], row["y_cibica"], row["r_cibica"]),
+                    (row["x_qi"], row["y_qi"], row["r_qi"]),
                 ],
+                ground_truth=(gt["X"], gt["Y"], gt["R"]),
+                colors=colors,
+                gt_color=gt_color,
             )
-            ax.imshow(canvas, interpolation="bilinear")
-            ax.set_xticks([])
-            ax.set_yticks([])
             ax.set_title(
                 f"CIBICA J={row['j_cibica']:.3f}   Qi J={row['j_qi']:.3f}", fontsize=9
             )
     fig.tight_layout()
 
     os.makedirs(output_dir, exist_ok=True)
-    suffix = f"-{date_tag}" if date_tag else ""
+    suffix = f"_{date_tag}" if date_tag else ""
     paths = []
     for ext in (".png", ".pdf"):
-        path = os.path.join(
-            output_dir, f"roman2026-roman-2025-failure-gallery{suffix}{ext}"
-        )
-        fig.savefig(path)
+        path = os.path.join(output_dir, f"Fig16_FailureGallery{suffix}{ext}")
+        fig.savefig(path, dpi=300)
         paths.append(path)
     plt.close(fig)
-    progress(
-        f"  Saved: roman2026-roman-2025-failure-gallery{suffix}.png/pdf  "
-        "(paper Fig. 16)"
-    )
+    progress(f"  Saved: Fig16_FailureGallery{suffix}.png/pdf  (paper Fig. 16)")
     return paths

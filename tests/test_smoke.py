@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -52,6 +53,7 @@ def test_public_api_present():
         "load_image",
         "load_edge_points",
         "save_result",
+        "save_results",
     ]:
         assert hasattr(cibica, name), f"missing public symbol: {name}"
 
@@ -162,3 +164,215 @@ def test_cli_json_output(tmp_path, capsys):
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["method"] == "qi" and set("xyr").issubset(payload)
+
+
+def test_cli_version(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+    assert exc.value.code == 0
+    assert capsys.readouterr().out.startswith("cibica ")
+
+
+def test_cli_cibica_method_options(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(
+        [
+            "cibica",
+            str(img),
+            "--n-triplets",
+            "300",
+            "--no-refine",
+            "--rmin",
+            "5",
+            "--rmax",
+            "40",
+            "-q",
+        ]
+    )
+    assert rc == 0
+
+
+def test_cli_hough_method_options(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(
+        [
+            "hough",
+            str(img),
+            "--param2",
+            "8",
+            "--min-dist",
+            "100",
+            "--min-radius",
+            "5",
+            "--max-radius",
+            "40",
+            "-q",
+        ]
+    )
+    assert rc == 0
+
+
+def test_cli_rht_method_options(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(["rht", str(img), "--iterations", "1500", "--threshold", "3", "-q"])
+    assert rc == 0
+
+
+def test_cli_rcd_method_options(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(
+        [
+            "rcd",
+            str(img),
+            "--iterations",
+            "800",
+            "--distance-threshold",
+            "2",
+            "--min-inliers",
+            "5",
+            "--min-distance",
+            "10",
+            "-q",
+        ]
+    )
+    assert rc == 0
+
+
+def test_cli_qi_method_options(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(["qi", str(img), "--max-iterations", "200", "-q"])
+    assert rc == 0
+
+
+_DATA = Path(__file__).resolve().parents[1] / "data"
+
+
+@pytest.mark.skipif(
+    not (_DATA / "green_back_ROI").is_dir(),
+    reason="dataset not present (data/ is separate from the package)",
+)
+def test_cli_preprocess_and_green_ref():
+    frame = str(_DATA / "black_sphere_ROI" / "051331512_20208683_Feet_L_S_0.png")
+    green = str(_DATA / "green_back_ROI" / "051331512_20208683_Feet_L_S_0.png")
+    rc = cli.main(
+        [
+            "compare",
+            frame,
+            "--methods",
+            "cibica,qi",
+            "--preprocess",
+            "median_filter",
+            "--green-ref",
+            green,
+            "-q",
+        ]
+    )
+    assert rc == 0
+
+
+def test_cli_compare_selected_methods_overlay(tmp_path, capsys):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    out = tmp_path / "overlay"  # no extension -> .pdf
+    rc = cli.main(["compare", str(img), "-m", "hough,qi", "-o", str(out), "-q"])
+    assert rc == 0
+    assert (tmp_path / "overlay.pdf").is_file()
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert [ln.split()[0] for ln in lines] == ["hough", "qi"]
+
+
+def test_cli_compare_defaults_to_all_methods(tmp_path, capsys):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    rc = cli.main(["compare", str(img), "-q"])
+    assert rc == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert [ln.split()[0] for ln in lines] == list(cibica.METHODS)
+
+
+def test_cli_compare_json_and_raster(tmp_path, capsys):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    out = tmp_path / "overlay.png"
+    rc = cli.main(["compare", str(img), "-m", "qi", "--json", "-o", str(out), "-q"])
+    assert rc == 0
+    import json
+
+    payload = json.loads(capsys.readouterr().out)
+    assert [r["method"] for r in payload["results"]] == ["qi"]
+    assert set("xyr").issubset(payload["results"][0])
+    # Raster overlays are written on a 10x nearest-neighbour upscale.
+    canvas = cv2.imread(str(out))
+    assert canvas.shape[0] == 10 * _circle_image().shape[0]
+
+
+def test_cli_compare_unknown_method_is_usage_error(tmp_path, capsys):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    assert cli.main(["compare", str(img), "-m", "qi,bogus", "-q"]) == 2
+
+
+def test_save_results_multi_method_csv(tmp_path):
+    out = tmp_path / "all.csv"
+    cibica.save_results(
+        out, [("qi", (30.0, 20.0, 8.0)), ("hough", (31.0, 21.0, 9.0))], source="x"
+    )
+    lines = out.read_text().strip().splitlines()
+    assert lines[0] == "method,x,y,r"
+    assert lines[1].startswith("qi,") and lines[2].startswith("hough,")
+
+
+def test_rcd_default_min_distance_adapts_to_small_frames():
+    # On a ~22 px-diameter circle (typical black-sphere ROI) the former fixed
+    # default min_distance=20 made triplet acceptance nearly impossible, so
+    # rcd usually found nothing. The default must scale with the point cloud.
+    pts = _noisy_circle_rowcol(row_c=16, col_c=16, r=11, n=60, noise=0.3)
+    for seed in range(5):
+        np.random.seed(seed)
+        _center, radius = cibica.rcd(pts)
+        assert radius is not None
+        assert not isinstance(radius, (int, np.integer)) and radius > 0, f"seed {seed}"
+
+
+def test_cli_compare_raster_legend_below_image(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    out = tmp_path / "ov.png"
+    rc = cli.main(["compare", str(img), "-m", "hough,qi", "-o", str(out), "-q"])
+    assert rc == 0
+    canvas = cv2.imread(str(out))
+    h, w = _circle_image().shape[:2]
+    assert canvas.shape[1] == 10 * w  # image width unchanged
+    assert canvas.shape[0] > 10 * h  # legend strip appended below
+    assert canvas.shape[0] - 10 * h <= 28  # two short entries -> one row
+
+
+def test_raster_legend_single_row_when_it_fits():
+    from cibica.draw import _raster_legend
+
+    entries = [
+        ("cibica", (0, 0, 255)),
+        ("hough", (255, 0, 0)),
+        ("rht", (0, 255, 0)),
+        ("qi", (0, 255, 255)),
+    ]
+    # Wide strip: everything fits at full size on one row.
+    assert _raster_legend(1100, entries).shape[0] == 28
+    # Narrow strip: shrink moderately to keep a single row instead of wrapping.
+    assert _raster_legend(330, entries).shape[0] < 2 * 18
+
+
+def test_single_method_overlay_has_no_legend(tmp_path):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    out = tmp_path / "ov.png"
+    rc = cli.main(["compare", str(img), "-m", "qi", "-o", str(out), "-q"])
+    assert rc == 0
+    canvas = cv2.imread(str(out))
+    h, w = _circle_image().shape[:2]
+    assert canvas.shape[:2] == (10 * h, 10 * w)

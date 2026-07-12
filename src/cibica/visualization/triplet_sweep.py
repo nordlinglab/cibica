@@ -158,12 +158,12 @@ def run_triplet_sweep(
     tag = "complete" if runs > 1 else "partial: range/CV zero until runs>1"
     progress(f"  Saved: {csv_path}  (paper Table 6, {tag})")
 
+    # Figures are undated (Fig7/Fig8 convention); date_tag only stamps the CSV.
     if make_fig and runs > 1:
         plot_jaccard_difference(
             mean_j,
             list(n_triplets_list),
             output_dir=fig_dir,
-            date_tag=date_tag,
             progress=progress,
         )
     return rows

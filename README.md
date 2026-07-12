@@ -1,7 +1,7 @@
 ---
 title: "cibica"
 author: "Esteban Román Catafau and Torbjörn E. M. Nordling"
-date: "2026-06-22"
+date: "2026-07-12"
 license: "Apache-2.0"
 purpose: "Gradient-free combinatorial circle estimation for motion-blurred clinical video, with four baseline methods and a CLI."
 ---
@@ -10,7 +10,7 @@ purpose: "Gradient-free combinatorial circle estimation for motion-blurred clini
 
 **Robust gradient-free circle estimation for motion-blurred clinical video.**
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20790416.svg)](https://doi.org/10.5281/zenodo.20790416)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20790415.svg)](https://doi.org/10.5281/zenodo.20790415)
 
 `cibica` estimates a single circle from a noisy, gradient-free set of edge points
 by sampling edge-point triplets,
@@ -43,12 +43,16 @@ Each returns the circle as `(x_col, y_row, r)` in pixels.
 
 ```bash
 # from a local clone (editable, for development)
+uv venv                      # create .venv (once)
+source .venv/bin/activate    # activate it so the `cibica` command is on PATH
 uv pip install -e .
 # or directly from GitHub
 uv pip install git+https://github.com/nordlinglab/cibica
 ```
 
-Requires Python ≥ 3.9.
+Requires Python ≥ 3.12.11.
+The `cibica` command and the `python` used below live in the environment you installed into;
+when using a project-local `.venv`, run `source .venv/bin/activate` in each new shell first (or prefix commands with `uv run`).
 Dependencies (numpy, scipy, opencv-python, pandas, matplotlib) install automatically.
 The example **dataset is not part of the pip package** — it is kept separate from the code in this repository's `data/` directory and is obtained by cloning the repository.
 
@@ -65,11 +69,17 @@ cibica rcd    image.jpg     # Randomized Circle Detection
 cibica qi     image.jpg     # robust algebraic fitting
 
 cibica image.jpg            # shorthand: omitting the method runs CIBICA
-cibica qi image.jpg -o result.json   # also save (.json / .csv / .txt / image overlay)
+cibica qi image.jpg -o result.json   # also save (.json / .csv / .txt)
+cibica qi image.jpg -o overlay       # vector overlay; PDF is the default format
+cibica qi image.jpg -o overlay.jpg   # raster overlay on a 10x-upscaled image
+
+cibica compare image.jpg                       # all five methods on one input
+cibica compare image.jpg -m cibica,qi -o fig   # overlay + colour legend in fig.pdf
 ```
 
 Each prints the circle to stdout as `x y r` (column centre, row centre, radius, in pixels);
-add `--json` for machine-readable output.
+`compare` prints one `method x y r` line per method.
+Add `--json` for machine-readable output.
 Run `cibica --help` or `cibica <method> --help` for the per-method options.
 
 ## Usage — Python
@@ -93,16 +103,17 @@ x, y, r = cibica.estimate("image.jpg", method="cibica", n_triplets=1000)
 The study spans two scripts — **run both** to reproduce the full set of paper artefacts:
 
 ```bash
-uv venv --python 3.9.23                                          # creates the environment and pins the interpreter
+uv venv --python 3.12.11                                         # creates the environment and pins the interpreter
 uv pip install -e . -r requirements.lock                         # cibica + exact pinned dependencies
-uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-14, 17
+uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-17
 uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling consistency: Table 1, Figs. 7 & 8
 ```
 
 - `run_experiment.py` runs the five methods on 144 frames x 18 preprocessing
-  configurations, producing paper Tables 3-6 and Figs. 11-14. The supplementary
-  diagnostic figures `FigS1`-`FigS6` (not numbered in the paper) are produced
-  only when `--supplementary` is given.
+  configurations, producing paper Tables 3-6 and Figs. 11-16 (the qualitative
+  overlays, Figs. 15 & 16, use the manuscript's caption colours). The
+  supplementary diagnostic figures `FigS1`-`FigS6` (not numbered in the paper)
+  are produced only when `--supplementary` is given.
 - `run_labeling_analysis.py` quantifies the manual ground-truth labeling
   consistency, producing paper Table 1 and Figs. 7 & 8. The labelling pass is
   chosen with `--labelling {A,B}` and **defaults to B**
@@ -143,10 +154,11 @@ The reusable figure/table generators live in `cibica.visualization` (one module
 per artefact) so either script can call them.
 
 All outputs are written under **`./results/`** (created in the current working directory):
-the CSV tables (`Jaccard_*`, `Table*`, `Stats_*`) in `results/tables/`,
+the CSV tables (`Jaccard_*`, `Table*`, `Summary_*`, `Stats_*`) in `results/tables/`,
 and the figures in `results/figures/`, each as `.png` and `.pdf`.
-Figure files are named by their paper number (`Fig7`, `Fig8`, `Fig11`–`Fig14`, `Fig17`);
-supplementary diagnostics carry an `S` prefix (`FigS1`–`FigS6`) and are written only under `--supplementary`.
+Figure files are named by their paper number (`Fig7`, `Fig8`, `Fig11`–`Fig17`) without a date;
+tables carry a `_YYYYMMDD` date suffix so runs from different days coexist.
+Supplementary diagnostics carry an `S` prefix (`FigS1`–`FigS6`) and are written only under `--supplementary`.
 Results were produced on an Apple Mac Studio (M4 Max), single-machine CPU with NumPy;
 the bootstrap uses a fixed seed (42).
 
@@ -160,7 +172,7 @@ only the cropped sphere ROIs, the green-background samples, and their annotation
 ## Citation
 
 If you use this software or dataset, please cite both the software and the article — machine-readable metadata is in `CITATION.cff`.
-The archived v1.2.0 release is on Zenodo: [doi:10.5281/zenodo.20790416](https://doi.org/10.5281/zenodo.20790416).
+All archived releases are on Zenodo under the all-versions DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415), which always resolves to the latest release.
 
 ## License
 

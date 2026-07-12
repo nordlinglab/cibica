@@ -27,12 +27,12 @@ authors:
     orcid: "https://orcid.org/0000-0003-4867-6707"
     affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
     email: torbjorn.nordling@nordlinglab.org
-version: "1.2.0"
-date-released: "2026-06-22"
+version: "1.3.0"
+date-released: "2026-07-12"
 license: Apache-2.0
 repository-code: "https://github.com/nordlinglab/cibica"
-doi: "10.5281/zenodo.20790416"
-url: "https://doi.org/10.5281/zenodo.20790416"
+doi: "10.5281/zenodo.20790415"
+url: "https://doi.org/10.5281/zenodo.20790415"
 keywords:
   - robust circle estimation
   - gradient-free geometric sampling

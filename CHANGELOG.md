@@ -3,10 +3,42 @@
 All notable changes to cibica are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415).
+
+## [1.3.0] - 2026-07-12
+
+### Added
+
+- `cibica compare` subcommand: run several methods on one input (`-m`, default all five)
+  and overlay every estimate in a single figure with a method-to-colour legend.
+- Shared drawing module `cibica.draw`, used by the CLI and the paper figures.
+  Overlay colours default to ColorBrewer Set1 ranked by CIELAB contrast against the image;
+  pass `colors=`/`gt_color=` to override. Up to five circles per overlay.
+- Vector overlays: `-o file.pdf`/`.svg` draw resolution-independent circles at exact
+  sub-pixel coordinates; PDF is the default when the output path has no extension.
+  Raster outputs draw anti-aliased circles on a 10x nearest-neighbour upscale.
+- Multi-method writer `save_results()`; `save_result()` now returns the written path.
+- Meta-tests that fail if any CLI subcommand, option, or flag lacks a test.
+
+### Changed
+
+- Requires Python >= 3.12.11. Dependency minimums raised to numpy 2.5.0
+  (ships the macOS Accelerate FPE fix, numpy PR #30255), scipy 1.18.0,
+  pandas 3.0.3, opencv-python 4.13, and matplotlib 3.11.
+- Figure files are written without a date suffix; tables keep `_YYYYMMDD`.
+- Figs. 15-16 render as vector overlays; the reproduction script pins the
+  manuscript's caption colours.
+
+### Fixed
+
+- `rcd()` default `min_distance` now scales with the point cloud
+  (40% of the larger edgel extent, capped at the former 20 px).
+  The fixed default made triplet acceptance geometrically infeasible on the
+  ~22 px dataset ROIs, so RCD found no circle via `estimate()` and the CLI.
 
 ## [1.2.0] - 2026-06-22
 
-First public release, archived on Zenodo ([doi:10.5281/zenodo.20790416](https://doi.org/10.5281/zenodo.20790416)).
+First public release, archived on Zenodo ([doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415)).
 Accompanies the manuscript *"Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"* (The Visual Computer).
 
 ### Added

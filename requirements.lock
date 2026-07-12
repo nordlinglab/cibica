@@ -2,15 +2,15 @@
 # "Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"
 # (CIBICA), submitted to The Visual Computer.
 #
-# Python 3.9.23 on macOS arm64 (Apple M4 Max). Reproduce with uv:
-#     uv venv --python 3.9.23                                          # creates the environment and pins the interpreter
+# Python 3.12.11 on macOS arm64 (Apple M4 Max). Reproduce with uv:
+#     uv venv --python 3.12.11                                         # creates the environment and pins the interpreter
 #     uv pip install -e . -r requirements.lock                         # cibica + exact pinned dependencies
 #     uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-14, 17
 #     uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling consistency: Table 1, Figs. 7 & 8
 #
 # See pyproject.toml for the loose, forward-compatible dependency ranges.
-matplotlib==3.9.4
-numpy==2.0.2
+matplotlib==3.11.0
+numpy==2.5.0
 opencv-python==4.13.0.92
-pandas==2.3.3
-scipy==1.13.1
+pandas==3.0.3
+scipy==1.18.0

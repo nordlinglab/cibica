@@ -727,9 +727,9 @@ def plot_line_configs(results, output_dir="."):
     )
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig12_Jaccard_AllConfigs_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"Fig12_Jaccard_AllConfigs{ext}"))
     plt.close()
-    print(f"  Saved: Fig12_Jaccard_AllConfigs_{DATE}.png/pdf")
+    print("  Saved: Fig12_Jaccard_AllConfigs.png/pdf")
 
 
 def plot_heatmap_method_config(results, output_dir="."):
@@ -788,11 +788,9 @@ def plot_heatmap_method_config(results, output_dir="."):
     ax.grid(False)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(
-            os.path.join(output_dir, f"FigS1_Heatmap_MethodxConfig_{DATE}{ext}")
-        )
+        plt.savefig(os.path.join(output_dir, f"FigS1_Heatmap_MethodxConfig{ext}"))
     plt.close()
-    print(f"  Saved: FigS1_Heatmap_MethodxConfig_{DATE}.png/pdf")
+    print("  Saved: FigS1_Heatmap_MethodxConfig.png/pdf")
 
 
 def plot_violin(
@@ -862,11 +860,9 @@ def plot_violin(
     ax.legend(handles=patches, loc="lower right", ncol=len(METHODS), fontsize=9)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(
-            os.path.join(output_dir, f"{fig_label}_Violin_{fig_tag}_{DATE}{ext}")
-        )
+        plt.savefig(os.path.join(output_dir, f"{fig_label}_Violin_{fig_tag}{ext}"))
     plt.close()
-    print(f"  Saved: {fig_label}_Violin_{fig_tag}_{DATE}.png/pdf")
+    print(f"  Saved: {fig_label}_Violin_{fig_tag}.png/pdf")
 
 
 def plot_focal_stats(focal_stats, output_dir="."):
@@ -920,9 +916,9 @@ def plot_focal_stats(focal_stats, output_dir="."):
     ax.set_xlim(xlims)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"FigS3_Stats_FocalTest_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS3_Stats_FocalTest{ext}"))
     plt.close()
-    print(f"  Saved: FigS3_Stats_FocalTest_{DATE}.png/pdf")
+    print("  Saved: FigS3_Stats_FocalTest.png/pdf")
 
 
 def plot_fps(results, output_dir="."):
@@ -978,9 +974,9 @@ def plot_fps(results, output_dir="."):
     ax.set_axisbelow(True)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"FigS4_FPS_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS4_FPS{ext}"))
     plt.close()
-    print(f"  Saved: FigS4_FPS_{DATE}.png/pdf")
+    print("  Saved: FigS4_FPS.png/pdf")
 
 
 def plot_pairwise_heatmap(pw_rows, output_dir="."):
@@ -1029,9 +1025,9 @@ def plot_pairwise_heatmap(pw_rows, output_dir="."):
     ax.grid(False)
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"Fig14_Pairwise_Wilcoxon_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"Fig14_Pairwise_Wilcoxon{ext}"))
     plt.close()
-    print(f"  Saved: Fig14_Pairwise_Wilcoxon_{DATE}.png/pdf")
+    print("  Saved: Fig14_Pairwise_Wilcoxon.png/pdf")
 
 
 def plot_summary_panel(results, output_dir="."):
@@ -1121,9 +1117,9 @@ def plot_summary_panel(results, output_dir="."):
 
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"FigS5_Summary_Panel_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS5_Summary_Panel{ext}"))
     plt.close()
-    print(f"  Saved: FigS5_Summary_Panel_{DATE}.png/pdf")
+    print("  Saved: FigS5_Summary_Panel.png/pdf")
 
 
 def plot_jaccard_distance(results, output_dir="."):
@@ -1162,9 +1158,9 @@ def plot_jaccard_distance(results, output_dir="."):
     ax.legend(ncol=len(METHODS), fontsize=9.5, loc="upper left")
     plt.tight_layout()
     for ext in (".png", ".pdf"):
-        plt.savefig(os.path.join(output_dir, f"FigS6_JaccardDistance_{DATE}{ext}"))
+        plt.savefig(os.path.join(output_dir, f"FigS6_JaccardDistance{ext}"))
     plt.close()
-    print(f"  Saved: FigS6_JaccardDistance_{DATE}.png/pdf")
+    print("  Saved: FigS6_JaccardDistance.png/pdf")
 
 
 # ============================================================================
@@ -1324,15 +1320,26 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     # at this reference config the majority of frames have < 100k triplet
     # combinations while a few exceed 1,000,000, matching the manuscript text.
     fig11_idx = cfg_names.index("GL82") if "GL82" in cfg_names else 0
-    plot_pixel_combinations(
-        results["edge_counts"][:, fig11_idx], output_dir=FIGURES, date_tag=DATE
-    )
+    plot_pixel_combinations(results["edge_counts"][:, fig11_idx], output_dir=FIGURES)
 
     # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT at GL80; CIBICA
     # vs Qi et al. failure gallery at GL82). Runs CIBICA + one baseline on all
     # 144 frames at a single config each, independent of the main 5x18 sweep.
-    plot_visual_comparison(_DATA, output_dir=FIGURES, date_tag=DATE)
-    plot_failure_gallery(_DATA, output_dir=FIGURES, date_tag=DATE)
+    # Colours pin the manuscript caption scheme (BGR): ground truth green
+    # dashed, CIBICA blue, CHT red, Qi et al. orange — overriding the
+    # image-adaptive ColorBrewer defaults so the captions stay accurate.
+    plot_visual_comparison(
+        _DATA,
+        output_dir=FIGURES,
+        colors=[(180, 119, 31), (40, 39, 214)],
+        gt_color=(60, 200, 60),
+    )
+    plot_failure_gallery(
+        _DATA,
+        output_dir=FIGURES,
+        colors=[(180, 119, 31), (0, 140, 255)],
+        gt_color=(60, 200, 60),
+    )
 
     print_summary(results, replicates=replicates)
 
@@ -1369,8 +1376,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     print("  Fig12 line plot     -> Fig. 12 (mean Jaccard vs 18 configs)")
     print("  Fig13 violin (GL82) -> Fig. 13 (per-frame Jaccard at GL82)")
     print("  Fig14 pairwise p-val-> Fig. 14 (pairwise Wilcoxon)")
-    print("  Visual comparison   -> Fig. 15 (CIBICA vs CHT, 4 frames at GL80)")
-    print("  Failure gallery     -> Fig. 16 (CIBICA vs Qi et al., GL82)")
+    print("  Fig15 visual comp   -> Fig. 15 (CIBICA vs CHT, 4 frames at GL80)")
+    print("  Fig16 failure gal   -> Fig. 16 (CIBICA vs Qi et al., GL82)")
     print("  Fig17 triplet diff  -> Fig. 17 (Jaccard vs 10k triplets; --full only)")
     print("  Stats_*             -> in-text Wilcoxon/HL/CI focal + pairwise")
     print("  FigS1-FigS6         -> supplementary diagnostics (--supplementary only)")

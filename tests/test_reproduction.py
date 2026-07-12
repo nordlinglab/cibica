@@ -243,9 +243,10 @@ def test_table6_triplet_sweep(sweep_result):
 
 
 def test_fig17_jaccard_difference_written(sweep_result):
+    # Figures are undated (Fig7/Fig8 convention); date_tag only stamps the CSV.
     _rows, out = sweep_result
-    assert (out / "Fig17_JaccardDifference_repro.png").is_file()
-    assert (out / "Fig17_JaccardDifference_repro.pdf").is_file()
+    assert (out / "Fig17_JaccardDifference.png").is_file()
+    assert (out / "Fig17_JaccardDifference.pdf").is_file()
 
 
 # ===========================================================================

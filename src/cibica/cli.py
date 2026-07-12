@@ -15,10 +15,19 @@ The method name is the subcommand. As a shorthand, omitting the subcommand
 runs the proposed method, so ``cibica foot.png`` is equivalent to
 ``cibica cibica foot.png``.
 
+The ``compare`` subcommand runs several methods on the same input (all five
+by default; select with ``-m/--methods``) and can overlay every estimate in
+one figure::
+
+    cibica compare foot.png                        # all five, print estimates
+    cibica compare foot.png -m cibica,qi -o fig    # two methods -> fig.pdf
+
 Estimated circles are printed to stdout as ``x y r`` (column centre, row
 centre, radius, in pixels). Use ``-o/--output FILE`` to also save the result;
-the format follows the file extension (``.json``, ``.csv``/``.txt``, or an
-image extension for a drawn overlay).
+the format follows the file extension: ``.json``, ``.csv``/``.txt``,
+``.pdf``/``.svg`` for a vector overlay (PDF is the default when the path has
+no extension), or a raster image extension for an overlay drawn on a 10x
+nearest-neighbour upscale of the input.
 
 Standards conformance (ADR-0250, ADR-0252): the interface follows the POSIX
 Utility Syntax Guidelines with GNU extensions (long options, ``--help``,
@@ -35,7 +44,7 @@ import sys
 
 from cibica import __version__
 from cibica.estimate import METHODS, estimate
-from cibica.io import load_image, save_result
+from cibica.io import load_image, save_result, save_results
 
 # Translate CLI flags to each estimator's keyword arguments.
 _METHOD_KWARGS = {
@@ -87,7 +96,9 @@ def _add_common(p: argparse.ArgumentParser) -> None:
         "--output",
         metavar="FILE",
         help="save result; format inferred from extension "
-        "(.json, .csv/.txt, or image for an overlay)",
+        "(.json, .csv/.txt, .pdf/.svg for a vector overlay — the default "
+        "when no extension is given — or a raster image for a 10x-upscaled "
+        "overlay)",
     )
     p.add_argument(
         "--preprocess",
@@ -156,20 +167,130 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common(p)
     p.add_argument("--max-iterations", type=int, dest="max_iterations")
 
+    p = sub.add_parser(
+        "compare",
+        help="run several methods (each with its defaults) and overlay "
+        "their circles in one figure",
+    )
+    _add_common(p)
+    p.add_argument(
+        "-m",
+        "--methods",
+        metavar="LIST",
+        default=",".join(METHODS),
+        help=f"comma-separated methods to run (default: {','.join(METHODS)})",
+    )
+
     return parser
+
+
+def _run_compare(args: argparse.Namespace) -> int:
+    """Run several methods on one input; optionally save a combined output.
+
+    Each method runs with its default parameters. Exit code 1 only when
+    every method fails to find a circle.
+    """
+    methods = list(
+        dict.fromkeys(m.strip().lower() for m in args.methods.split(",") if m.strip())
+    )
+    unknown = [m for m in methods if m not in METHODS]
+    if not methods or unknown:
+        problem = (
+            f"unknown method(s): {', '.join(unknown)}"
+            if unknown
+            else "no methods given"
+        )
+        print(f"cibica: compare: {problem}", file=sys.stderr)
+        return 2
+
+    try:
+        green_ref = load_image(args.green_ref) if args.green_ref else None
+        circles = [
+            estimate(
+                args.input, method=m, preprocess=args.preprocess, green_ref=green_ref
+            )
+            for m in methods
+        ]
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"cibica: compare: {exc}", file=sys.stderr)
+        return 2
+
+    if not args.quiet:
+        print(
+            f"method=compare({','.join(methods)}) input={args.input}", file=sys.stderr
+        )
+    if args.json:
+        import json
+
+        print(
+            json.dumps(
+                {
+                    "input": args.input,
+                    "results": [
+                        {"method": m, "x": x, "y": y, "r": r}
+                        for m, (x, y, r) in zip(methods, circles)
+                    ],
+                }
+            )
+        )
+    else:
+        for m, (x, y, r) in zip(methods, circles):
+            print(f"{m} {x:.6g} {y:.6g} {r:.6g}")
+
+    import math
+
+    if not args.quiet:
+        for m, (_, _, r) in zip(methods, circles):
+            if math.isnan(r):
+                print(
+                    f"note: {m} found no circle; it is omitted from any overlay",
+                    file=sys.stderr,
+                )
+
+    if args.output:
+        from pathlib import Path
+
+        image = None
+        colors = None
+        if Path(args.output).suffix.lower() not in {".json", ".csv", ".txt"}:
+            from cibica.draw import color_name, select_overlay_colors
+
+            image = load_image(args.input)
+            colors = select_overlay_colors(image, circles[0], len(circles))
+            if not args.quiet:
+                for m, c, (_, _, r) in zip(methods, colors, circles):
+                    if not math.isnan(r):
+                        print(f"colour: {m} = {color_name(c)}", file=sys.stderr)
+        written = save_results(
+            args.output,
+            list(zip(methods, circles)),
+            source=args.input,
+            image=image,
+            colors=colors,
+        )
+        if not args.quiet:
+            print(f"saved: {written}", file=sys.stderr)
+
+    if all(math.isnan(r) for _, _, r in circles):
+        print(f"cibica: compare: no circle found in {args.input}", file=sys.stderr)
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI. Returns a process exit code."""
     argv = list(sys.argv[1:] if argv is None else argv)
     # Shorthand: bare 'cibica <input>' (no subcommand) runs the CIBICA method.
-    if argv and argv[0] not in METHODS and not argv[0].startswith("-"):
+    subcommands = (*METHODS, "compare")
+    if argv and argv[0] not in subcommands and not argv[0].startswith("-"):
         argv = ["cibica", *argv]
 
     args = _build_parser().parse_args(argv)
     if args.method is None:
         _build_parser().print_help()
         return 2
+    if args.method == "compare":
+        return _run_compare(args)
 
     kwargs = _METHOD_KWARGS[args.method](args)
 
@@ -203,18 +324,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{x:.6g} {y:.6g} {r:.6g}")
 
     if args.output:
-        # Reload the source image for an overlay; estimate() consumed only a copy.
+        # Reload the source image for an overlay; estimate() consumed only a
+        # copy. Everything except the data formats is an overlay (raster,
+        # .pdf/.svg, or no extension, which save_result defaults to .pdf).
+        from pathlib import Path
+
         image = None
-        if any(
-            args.output.lower().endswith(s)
-            for s in (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
-        ):
+        if Path(args.output).suffix.lower() not in {".json", ".csv", ".txt"}:
             image = load_image(args.input)
-        save_result(
+        written = save_result(
             args.output, (x, y, r), method=args.method, source=args.input, image=image
         )
         if not args.quiet:
-            print(f"saved: {args.output}", file=sys.stderr)
+            print(f"saved: {written}", file=sys.stderr)
 
     import math
 

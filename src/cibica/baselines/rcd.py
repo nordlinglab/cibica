@@ -77,7 +77,11 @@ def _circle_from_points(p1, p2, p3):
 
 
 def rcd(
-    edgels, num_iterations=1000, distance_threshold=2, min_inliers=10, min_distance=20
+    edgels,
+    num_iterations=1000,
+    distance_threshold=2,
+    min_inliers=10,
+    min_distance=None,
 ):
     """
     Fit a circle to edge points using RANSAC with Distance Constraints.
@@ -111,8 +115,12 @@ def rcd(
     min_inliers : int, optional
         Minimum number of inliers required for a valid circle (default: 10)
     min_distance : float, optional
-        Minimum required separation between sampled points (default: 20)
-        This prevents degenerate configurations from clustered points
+        Minimum required separation between sampled points. Defaults to
+        40% of the larger edgel extent, capped at 20 pixels, so triplet
+        acceptance stays geometrically feasible on small point clouds
+        (three points pairwise >= 20 apart cannot exist on a circle of
+        diameter < ~23). This prevents degenerate configurations from
+        clustered points; pass an explicit value to override.
 
     Returns
     -------
@@ -148,6 +156,12 @@ def rcd(
     # Input validation
     if len(edgels) < 4:
         return np.array([-1, -1]), -1
+
+    if min_distance is None:
+        # Scale the separation requirement to the data (docstring: "depends
+        # on expected radius"); a fixed 20 px is infeasible on small clouds.
+        span = max(np.ptp(edgels[:, 0]), np.ptp(edgels[:, 1]))
+        min_distance = min(20.0, 0.4 * float(span))
 
     best_circle = None
     best_inliers = 0
