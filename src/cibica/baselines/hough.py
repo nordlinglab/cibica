@@ -14,6 +14,8 @@ Reference:
 import cv2
 import numpy as np
 
+from cibica._sentinel import NO_CIRCLE
+
 
 def HOUGH(img, minDist=300, param1=50, param2=8, minRadius=5, maxRadius=25):
     """
@@ -42,7 +44,7 @@ def HOUGH(img, minDist=300, param1=50, param2=8, minRadius=5, maxRadius=25):
     -------
     x, y, r : float
         Circle center (x, y) and radius r
-        Returns (0, 0, 0) if no circle detected
+        Returns (nan, nan, nan) if no circle detected; test with is_no_circle
 
     Examples
     --------
@@ -69,7 +71,7 @@ def HOUGH(img, minDist=300, param1=50, param2=8, minRadius=5, maxRadius=25):
     )
 
     if Hough is None:
-        return 0, 0, 0
+        return NO_CIRCLE
     else:
         Hough = np.uint16(np.around(Hough))
         HoughVal = Hough[0, 0, :]

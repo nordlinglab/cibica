@@ -17,7 +17,9 @@ Main function: rcd(edgels, **kwargs)
 
 import numpy as np
 
+from cibica._constraints import Constraints, report_active, reporting_enabled
 from cibica._rng import random_subsets, resolve_rng
+from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
 
 
 def _distance(p1, p2):
@@ -85,6 +87,7 @@ def rcd(
     min_inliers=10,
     min_distance=None,
     rng=None,
+    constraints=None,
 ):
     """
     Fit a circle to edge points using RANSAC with Distance Constraints.
@@ -128,17 +131,23 @@ def rcd(
         Source of randomness for point sampling. Pass an explicit generator
         when calling from worker processes; ``None`` derives one from the
         global NumPy stream.
+    constraints : cibica.Constraints, optional
+        Radius and centre bounds a candidate must satisfy. ``None`` (default)
+        searches unbounded, which is the historical behaviour. When a bound
+        discards what would otherwise have won, that is reported on stderr if
+        reporting is enabled.
 
     Returns
     -------
     center : numpy.ndarray
-        Array [cx, cy] of circle center coordinates
+        Array ``[x_col, y_row]`` of circle center coordinates
     radius : float
         Circle radius
 
     Notes
     -----
-    Returns ([-1, -1], -1) if no valid circle is found.
+    Returns (``[nan, nan]``, ``nan``) if no valid circle is found;
+    test it with :func:`cibica.is_no_circle`.
 
     The algorithm tries 4*num_iterations triplet fits (4 triplets per iteration),
     making it more thorough than standard RANSAC but also ~4x slower.
@@ -162,7 +171,7 @@ def rcd(
     """
     # Input validation
     if len(edgels) < 4:
-        return np.array([-1, -1]), -1
+        return NO_CIRCLE_CENTER(), NO_RADIUS
 
     if min_distance is None:
         # Scale the separation requirement to the data (docstring: "depends
@@ -172,6 +181,11 @@ def rcd(
 
     best_circle = None
     best_inliers = 0
+    # Tracked in parallel only so an activated bound can be reported.
+    free_circle = None
+    free_inliers = 0
+    cons = constraints if constraints is not None else Constraints()
+    report = reporting_enabled() and not cons.is_empty
 
     # Draw every quadruple up front; see the equivalent note in rht().
     quads = random_subsets(resolve_rng(rng), edgels.shape[0], 4, num_iterations)
@@ -206,16 +220,41 @@ def rcd(
                     # Count inliers
                     inliers = np.sum(geometric_distances < distance_threshold)
 
-                    # Update best circle if this one is better
-                    if inliers > best_inliers and inliers >= min_inliers:
+                    # Update best circle if this one is better. center indexes
+                    # (row, col), so the constraint check takes it reversed.
+                    if inliers > free_inliers and inliers >= min_inliers:
+                        free_inliers = inliers
+                        free_circle = (center, radius)
+                    if (
+                        inliers > best_inliers
+                        and inliers >= min_inliers
+                        and cons.accepts(center[1], center[0], radius)
+                    ):
                         best_inliers = inliers
                         best_circle = (center, radius)
 
+    if report and free_circle is not None:
+        free_xyr = (free_circle[0][1], free_circle[0][0], free_circle[1])
+        best_xyr = (
+            None
+            if best_circle is None
+            else (best_circle[0][1], best_circle[0][0], best_circle[1])
+        )
+        # Compare by value: the two tuples hold arrays, so identity would
+        # report every call, and an equal-valued winner is not an activation.
+        violated = cons.violation(*free_xyr)
+        if violated is not None and (
+            best_xyr is None or not np.allclose(best_xyr, free_xyr)
+        ):
+            report_active("RCD", violated, best_xyr, free_xyr)
+
     # Return best circle found
     if best_circle is None:
-        return np.array([-1, -1]), -1
+        return NO_CIRCLE_CENTER(), NO_RADIUS
 
-    return best_circle[0], float(best_circle[1])
+    # Swapped here so every estimator returns (x=col, y=row); the algorithm
+    # works in the (row, col) order of the input points.
+    return np.array([best_circle[0][1], best_circle[0][0]]), float(best_circle[1])
 
 
 if __name__ == "__main__":

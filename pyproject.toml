@@ -90,6 +90,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 "src/cibica/preprocessing.py" = ["N802", "N803", "N806"]
 "src/cibica/baselines/*.py" = ["N802", "N803", "N806"]
 "scripts/run_experiment.py" = ["N802", "N803", "N806"]
+"scripts/run_constraint_ablation.py" = ["N802", "N803", "N806"]
 
 [tool.mypy]
 python_version = "3.12"

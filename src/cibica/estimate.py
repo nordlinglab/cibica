@@ -57,10 +57,14 @@ def _resolve_input(data) -> tuple[str, np.ndarray]:
 
 
 def _normalize_rowcol(center, radius) -> tuple[float, float, float]:
-    """Map an estimator returning ``([row, col], r)`` to ``(x_col, y_row, r)``."""
+    """Unpack an estimator returning ``([x_col, y_row], r)`` to ``(x, y, r)``.
+
+    The baselines swap to ``(x_col, y_row)`` themselves before returning, so
+    this only unpacks and screens failures.
+    """
     if radius is None or radius <= 0:
         return _NAN
-    return float(center[1]), float(center[0]), float(radius)
+    return float(center[0]), float(center[1]), float(radius)
 
 
 def estimate(
@@ -121,10 +125,10 @@ def estimate(
         return _NAN
 
     if method == "cibica":
-        # CIBICA's median_3d packs the centre by integer encoding, which
-        # requires both centre coordinates to be below xmax/ymax. Use one
-        # square bound >= every coordinate so the (row, col) centre always
-        # decodes correctly, regardless of the image aspect ratio.
+        # xmax/ymax bound the centre only when the caller opts in through
+        # minval/margin; CIBICA imposes no centre bound by default. Default
+        # them to one square bound >= every coordinate so such a bound stays
+        # correct regardless of the image aspect ratio.
         bound = int(np.ceil(float(edgels.max()))) + 1
         kwargs.setdefault("xmax", bound)
         kwargs.setdefault("ymax", bound)

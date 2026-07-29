@@ -2,12 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Wilcoxon signed-rank test reporting both sidedness conventions.
 
-The manuscript declares the focal CIBICA-versus-baseline test one-sided
-("improvement > 0"), while the experiment calls
-``wilcoxon(..., alternative="two-sided")``, so every published focal p-value is
-in fact two-sided. This function returns both, together with the
-``W+`` statistic the manuscript quotes, so a reader can check either convention
-without re-running anything.
+The manuscript declares the focal CIBICA-versus-baseline test two-sided,
+matching the ``wilcoxon(..., alternative="two-sided")`` the experiment calls.
+This function returns both conventions, together with the ``W+`` statistic the
+manuscript quotes, so a reader can check either without re-running anything.
 
 Two conventions are made explicit here:
 
@@ -15,10 +13,10 @@ Two conventions are made explicit here:
     Under ``alternative="two-sided"`` SciPy returns ``min(W+, W-)``; the
     manuscript quotes ``W+``. ``W+`` is taken from the one-sided fit.
 Sign of the rank-biserial correlation
-    The earlier ``_rank_biserial`` was fed ``min(W+, W-)``, which makes the
-    correlation negative for an improvement; the manuscript reports the
-    absolute value. Computing it from ``W+`` gives the same magnitude with the
-    sign matching the direction of the effect.
+    Feeding ``min(W+, W-)`` to the rank-biserial formula makes the correlation
+    negative for an improvement, and the manuscript reports the absolute value.
+    Computing it from ``W+`` gives the same magnitude with the sign matching
+    the direction of the effect.
 
 References:
     Kerby, D. S. (2014). The simple difference formula: An approach to teaching

@@ -63,7 +63,15 @@ __version__ = "1.3.0"
 __author__ = "Torbjörn E. M. Nordling"
 __email__ = "t@nordlinglab.org"
 
+from cibica._constraints import Constraints, set_reporting
+from cibica._sentinel import NO_CIRCLE, NO_RADIUS, is_no_circle
+
 __all__ = [
+    "NO_CIRCLE",
+    "NO_RADIUS",
+    "Constraints",
+    "is_no_circle",
+    "set_reporting",
     # unified API
     "estimate",
     "METHODS",

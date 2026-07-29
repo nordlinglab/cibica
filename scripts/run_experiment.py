@@ -75,12 +75,14 @@ from cibica import (
     CIBICA,
     HOUGH,
     get_preprocessing_configs,
+    is_no_circle,
     preprocess_green_level,
     preprocess_median_filter,
     qi_2024,
     rcd,
     rht,
 )
+from cibica._constraints import report_degenerate
 from cibica.analysis import (
     end_to_end_fps,
     leave_one_subject_out,
@@ -150,6 +152,14 @@ STOCHASTIC = {"CIBICA", "RHT", "RCD"}
 # method's stream never depends on its position in METHODS at runtime.
 METHOD_ID = {m: k for k, m in enumerate(METHODS)}
 BEST_GL = ["GL80", "GL82", "GL84"]
+
+# Radius window shared by every method that can express one, so the comparison
+# is parameter-matched rather than each method carrying its own prior. These
+# are CIBICA's values, tuned for the real sphere radii (~9.5-14.1 px here). A
+# tighter window of its own is worth about +0.0012 mean Jaccard to HOUGH per
+# the constraint ablation, which is exactly the kind of unmatched advantage a
+# shared window removes.
+RMIN, RMAX = 4, 30
 
 # Color palette — colorblind-friendly
 COLORS = {
@@ -291,11 +301,14 @@ def compute_focal_stats(results, focal="CIBICA"):
                 CI_hi=round(hi, 4),
                 W_stat=round(w["w_statistic"], 1),
                 W_plus=round(w["w_plus"], 1),
-                p_value=w["p_one_sided"],
+                # Two-sided is the reported convention: a baseline beating
+                # CIBICA is a finding, not a null result, and the all-pairs
+                # and ablation tests it is pooled with are two-sided too.
+                p_value=w["p_two_sided"],
                 p_one_sided=w["p_one_sided"],
                 p_two_sided=w["p_two_sided"],
                 r_rb=round(w["rank_biserial"], 3),
-                Stars=_sig_stars(w["p_one_sided"]),
+                Stars=_sig_stars(w["p_two_sided"]),
                 n_better=w["n_better"],
                 n_worse=w["n_worse"],
                 n_tied=w["n_tied"],
@@ -310,7 +323,17 @@ def compute_focal_stats(results, focal="CIBICA"):
 
 
 def _estimate_once(
-    method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT, rng=None
+    method,
+    edgels,
+    edge_u8,
+    xmax,
+    ymax,
+    n_triplets,
+    XGT,
+    YGT,
+    RGT,
+    rng=None,
+    constraints=None,
 ):
     """Run one method once on one frame×config; return (jaccard, elapsed_s).
 
@@ -320,38 +343,63 @@ def _estimate_once(
 
     ``rng`` is forwarded to the stochastic estimators so a worker process draws
     from its own stream instead of a process-global one.
+
+    Returns a third element, ``declined``: True when the estimator returned no
+    circle at all (precondition unmet, no candidate survived, a diverged fit,
+    or an exception) rather than an answer that happened to be wrong. Both
+    score 0.0, but they are different events and the tables report them apart.
     """
     t0 = time.perf_counter()
     try:
         if method == "CIBICA":
             if len(edgels) < 3:
-                return 0.0, 0.0
+                return 0.0, 0.0, True
             x, y, r = CIBICA(
-                edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax, rng=rng
+                edgels,
+                n_triplets=n_triplets,
+                xmax=xmax,
+                ymax=ymax,
+                rmin=RMIN,
+                rmax=RMAX,
+                rng=rng,
             )
             elapsed = time.perf_counter() - t0
-            if np.isnan(x) or r <= 0:
-                return 0.0, elapsed
-            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed
+            if is_no_circle(r) or np.isnan(x):
+                return 0.0, elapsed, True
+            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed, False
         if method == "HOUGH":
             # HOUGH receives the binary edge image * 255 per config (not raw
             # grayscale), so results vary across preprocessing configurations.
-            x, y, r = HOUGH(edge_u8, minDist=300, param2=8, minRadius=5, maxRadius=20)
+            # Radius window matched to CIBICA's [rmin, rmax] = [4, 30] px so
+            # neither method is given a tighter size prior than the other.
+            x, y, r = HOUGH(
+                edge_u8,
+                minDist=300,
+                param2=8,
+                minRadius=RMIN,
+                maxRadius=RMAX,
+            )
             elapsed = time.perf_counter() - t0
-            if x <= 0:
-                return 0.0, elapsed
-            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed
+            if is_no_circle(r) or np.isnan(x):
+                return 0.0, elapsed, True
+            return jaccard_circles(XGT, YGT, RGT, x, y, r), elapsed, False
         if method == "RHT":
             if len(edgels) < 3:
-                return 0.0, 0.0
-            c, r = rht(edgels, num_iterations=1000, threshold=3, rng=rng)
+                return 0.0, 0.0, True
+            c, r = rht(
+                edgels,
+                num_iterations=1000,
+                threshold=3,
+                rng=rng,
+                constraints=constraints,
+            )
             elapsed = time.perf_counter() - t0
-            if r <= 0:
-                return 0.0, elapsed
-            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
+            if is_no_circle(r):
+                return 0.0, elapsed, True
+            return jaccard_circles(XGT, YGT, RGT, c[0], c[1], r), elapsed, False
         if method == "RCD":
             if len(edgels) < 4:
-                return 0.0, 0.0
+                return 0.0, 0.0, True
             c, r = rcd(
                 edgels,
                 num_iterations=1000,
@@ -359,22 +407,26 @@ def _estimate_once(
                 min_inliers=5,
                 min_distance=5,
                 rng=rng,
+                constraints=constraints,
             )
             elapsed = time.perf_counter() - t0
-            if r <= 0:
-                return 0.0, elapsed
-            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
+            if is_no_circle(r):
+                return 0.0, elapsed, True
+            return jaccard_circles(XGT, YGT, RGT, c[0], c[1], r), elapsed, False
         if method == "QI":
             if len(edgels) < 3:
-                return 0.0, 0.0
+                return 0.0, 0.0, True
             c, r = qi_2024(edgels)
             elapsed = time.perf_counter() - t0
-            if r <= 0:
-                return 0.0, elapsed
-            return jaccard_circles(YGT, XGT, RGT, c[0], c[1], r), elapsed
-    except Exception:
-        return 0.0, time.perf_counter() - t0
-    return 0.0, 0.0
+            if is_no_circle(r):
+                return 0.0, elapsed, True
+            return jaccard_circles(XGT, YGT, RGT, c[0], c[1], r), elapsed, False
+    except Exception as exc:
+        # Surfacing the exception changes no score, but keeps an estimator bug
+        # distinguishable from a fit that legitimately found nothing.
+        report_degenerate(method, "exception", f"{type(exc).__name__}: {exc}")
+        return 0.0, time.perf_counter() - t0, True
+    return 0.0, 0.0, True
 
 
 def performance_cores():
@@ -470,11 +522,13 @@ def _run_cell(task):
         rng = _cell_rng(seed, i, j, m)
         js = np.empty(reps)
         ts = np.empty(reps)
+        ds = np.empty(reps)
         for k in range(reps):
-            js[k], ts[k] = _estimate_once(
+            js[k], ts[k], declined = _estimate_once(
                 m, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT, rng
             )
-        per_method[m] = (js, ts)
+            ds[k] = float(declined)
+        per_method[m] = (js, ts, ds)
 
     return (i, j, len(edgels), per_method)
 
@@ -494,9 +548,9 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1, seed=None, n_jo
 
     Coordinate convention:
       GT: X=col (horizontal), Y=row (vertical)
-      CIBICA  → returns (col, row) → jaccard_circles(XGT, YGT, ...)
-      HOUGH   → returns (col, row) → jaccard_circles(XGT, YGT, ...)
-      RHT/RCD/QI → return (row, col) → jaccard_circles(YGT, XGT, ...)
+      Every estimator returns (x=col, y=row); RHT/RCD/QI swap internally as
+      their last step, since they compute in the (row, col) order of the
+      input points. All five therefore feed jaccard_circles(XGT, YGT, ...).
 
     Returns dict with per-cell mean Jaccard, run-to-run Jaccard std, and timing.
     """
@@ -514,6 +568,9 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1, seed=None, n_jo
     Jaccard = {m: np.zeros((n_images, n_configs)) for m in METHODS}
     JaccardReplStd = {m: np.zeros((n_images, n_configs)) for m in METHODS}
     Time_s = {m: np.zeros((n_images, n_configs)) for m in METHODS}
+    # Fraction of replicates in which the estimator returned no circle at all,
+    # as opposed to a wrong one. Both score 0; only this separates them.
+    Declined = {m: np.zeros((n_images, n_configs)) for m in METHODS}
     # Per-replicate, per-config Jaccard/time means over frames (R x n_configs),
     # needed to report the set of best configs selected across replicates.
     JaccByRepCfg = {m: np.zeros((replicates, n_configs)) for m in METHODS}
@@ -556,7 +613,8 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1, seed=None, n_jo
         if per_method is None:
             return
         edge_counts[i, j] = n_edgels
-        for m, (js, ts) in per_method.items():
+        for m, (js, ts, ds) in per_method.items():
+            Declined[m][i, j] = ds.mean()
             Jaccard[m][i, j] = js.mean()
             JaccardReplStd[m][i, j] = js.std() if js.size > 1 else 0.0
             Time_s[m][i, j] = ts.mean()
@@ -611,6 +669,7 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1, seed=None, n_jo
         **{f"Jaccard_{m}": Jaccard[m] for m in METHODS},
         **{f"JaccardReplStd_{m}": JaccardReplStd[m] for m in METHODS},
         **{f"Time_{m}": Time_s[m] for m in METHODS},
+        **{f"Declined_{m}": Declined[m] for m in METHODS},
         **{f"JaccByRepCfg_{m}": JaccByRepCfg[m] for m in METHODS},
         **{f"TimeByRepCfg_{m}": TimeByRepCfg[m] for m in METHODS},
         "edge_counts": edge_counts,
@@ -644,8 +703,9 @@ def _best_config_stats(results, m):
     For each replicate the best config is the one with the highest mean Jaccard
     over the 144 frames. Returns the *set* of configs chosen across replicates
     (a single name when replicates=1), the mean and run-to-run std of the
-    best-config Jaccard, the over-frames std at the overall-best config, and the
-    mean FPS at each replicate's best config.
+    best-config Jaccard, the over-frames std at the overall-best config, the
+    mean FPS at each replicate's best config, and the fraction of frames the
+    estimator declined and the fraction scoring zero.
     """
     cfg_names = results["config_names"]
     per_rep_cfg = results[f"JaccByRepCfg_{m}"]  # (R, n_configs) mean over frames
@@ -658,6 +718,7 @@ def _best_config_stats(results, m):
     cfg_set = sorted({cfg_names[c] for c in best_per_rep}, key=cfg_names.index)
     J = results[f"Jaccard_{m}"]
     best_overall = int(np.argmax(J.mean(axis=0)))
+    D = results[f"Declined_{m}"]
     return {
         "configs": cfg_set,
         "jaccard_mean": float(best_j.mean()),
@@ -665,6 +726,9 @@ def _best_config_stats(results, m):
         "jaccard_repl_std": float(best_j.std()),
         "fps": float(fps_per_rep.mean()),
         "all_config_mean": float(J.mean()),
+        "declined": float(D[:, best_overall].mean()),
+        "all_config_declined": float(D.mean()),
+        "zeros": float((J[:, best_overall] == 0).mean()),
     }
 
 
@@ -692,6 +756,8 @@ def save_summary_tables(results, output_dir="."):
             "Jaccard_std": round(bcs[m]["jaccard_std"], 4),
             "Jaccard_repl_std": round(bcs[m]["jaccard_repl_std"], 4),
             "FPS": round(bcs[m]["fps"], 1),
+            "Frac_declined": round(bcs[m]["declined"], 4),
+            "Frac_zero": round(bcs[m]["zeros"], 4),
         }
         for m in METHODS
     ]
@@ -707,6 +773,7 @@ def save_summary_tables(results, output_dir="."):
             "Method": m,
             "Jaccard_best_config": round(bcs[m]["jaccard_mean"], 4),
             "Jaccard_all_configs": round(bcs[m]["all_config_mean"], 4),
+            "Frac_declined_all_configs": round(bcs[m]["all_config_declined"], 4),
         }
         for m in METHODS
     ]
@@ -729,6 +796,8 @@ def save_summary_tables(results, output_dir="."):
                 "Jaccard_std": round(J.std(), 4),
                 "Jaccard_repl_std": round(results[f"JaccardReplStd_{m}"].mean(), 4),
                 "FPS": round(fps, 1),
+                "Frac_declined": round(results[f"Declined_{m}"].mean(), 4),
+                "Frac_zero": round(float((J == 0).mean()), 4),
             }
         )
     pd.DataFrame(rows).set_index("Method").to_csv(

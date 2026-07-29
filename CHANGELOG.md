@@ -5,6 +5,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415).
 
+## [Unreleased]
+
+### Changed
+
+- `vectorized_XYR()` centre bound (Filter 2) is off by default
+  (`minval=-inf`, `margin=inf`), and `CIBICA()` no longer imposes one.
+  It defaulted to a symmetric ±20 px tolerance through 1.3.0 and briefly to
+  the image rectangle. The bound is inert on the study data: over 144 frames
+  × GL80/82/84 × 3 replicates, lifting it changed no sample, because `rmax`
+  already confines a centre to within `rmax` of one of the triplet's edge
+  points. Pass `minval`/`margin` to reinstate it.
+- `median_3d()` takes the most frequent rounded `(r, x, y)` triple via
+  `np.unique(..., axis=0)`. It previously packed the triple into
+  `r*xmax*ymax + x*ymax + y` and decoded with modulo, which inverts only for
+  `0 <= x < xmax` and `0 <= y < ymax`: a centre outside that box aliased onto
+  a wrong position and corrupted the radius with it (on a 29×33 frame,
+  `(x=-3, y=16, r=11)` decoded as `(26, 16, 10)`), then voted in the mode.
+  That coupled the estimator to Filter 2's bounds; comparing triples directly
+  removes the coupling. Consensus selection stays O(N log N): both the former
+  `scipy.stats.mode` over packed integers and `np.unique` sort their input.
+  `xmax`/`ymax` are retained but unused.
+- Every estimator returns the NaN sentinel for "no circle"; `is_no_circle()`
+  is the predicate and still accepts the legacy `-1` and `0` so older result
+  files read correctly.
+- `scripts/run_experiment.py` runs CHT with `minRadius`/`maxRadius` set to
+  CIBICA's `[4, 30]` px window (shared `RMIN`/`RMAX` constants) instead of
+  `[5, 20]`, so neither method carries a tighter size prior than the other.
+- `_estimate_once()` returns a third element, `declined`, and the sweep
+  aggregates per-method `Declined` matrices, separating a fit the estimator
+  refused from one that was confidently wrong.
+
+### Fixed
+
+- Filter 1 discards a triplet when `|det| <= collinear_tol` (default
+  `1e-10`, matching RHT, exposed as a parameter). The former exact `det == 0`
+  test admitted triplets collinear to within floating-point rounding, whose
+  near-zero determinant produced an enormous radius caught only by `rmax`.
+- Estimator exceptions are reported through `report_degenerate()` before the
+  zero score is returned, so a genuine bug is no longer silent. No score
+  changes.
+
 ## [1.3.0] - 2026-07-12
 
 ### Added

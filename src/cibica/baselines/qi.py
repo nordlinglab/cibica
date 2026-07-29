@@ -18,6 +18,16 @@ Main function: qi_2024(edgels, **kwargs)
 import numpy as np
 from scipy import linalg
 
+from cibica._constraints import report_degenerate
+from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
+
+# A fit whose radius or centre offset exceeds this multiple of the point
+# cloud's own extent has not found the data -- it has diverged. This is a
+# numerical-failure detector derived from the data, not a prior on the
+# circle: a genuine fit is never two orders of magnitude larger than the
+# points it was fitted to.
+_DIVERGENCE_FACTOR = 100.0
+
 
 def _create_design_matrix(points):
     """
@@ -106,6 +116,15 @@ def _update_weights(residuals, k0=1.5, k1=2.5):
     # Robust scale estimate using MAD
     sigma0 = 1.4826 * np.median(np.abs(residuals))
 
+    # A (near-)perfect fit drives the median absolute residual to zero, and
+    # dividing by it yields inf/nan weights. With no scale there is nothing
+    # to downweight, so keep the weights uniform. Note this guards the
+    # division only: on noiseless input the solve still diverges (the
+    # generalised eigenproblem is ill-conditioned once the algebraic
+    # residuals vanish), which is what the divergence check below catches.
+    if not np.isfinite(sigma0) or sigma0 <= np.finfo(float).tiny:
+        return np.ones_like(residuals)
+
     # Standardized residuals
     v = residuals / sigma0
 
@@ -158,7 +177,7 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
     Returns
     -------
     center : numpy.ndarray
-        Array [cx, cy] of circle center coordinates
+        Array ``[x_col, y_row]`` of circle center coordinates
     radius : float
         Circle radius
 
@@ -184,7 +203,7 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
     """
     # Input validation
     if len(edgels) < 3:
-        return np.array([-1, -1]), -1
+        return NO_CIRCLE_CENTER(), NO_RADIUS
 
     # Create design matrix
     X = _create_design_matrix(edgels)
@@ -243,9 +262,37 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
 
     x0 = -B / (2 * A)
     y0 = -C / (2 * A)
-    r = np.sqrt((B**2 + C**2 - 4 * A * D) / (4 * A**2))
+    with np.errstate(invalid="ignore"):
+        r = np.sqrt((B**2 + C**2 - 4 * A * D) / (4 * A**2))
 
-    center = np.array([x0, y0])
+    # Catch a diverged solve explicitly rather than returning its output and
+    # letting it score zero by accident downstream.
+    span = float(max(np.ptp(edgels[:, 0]), np.ptp(edgels[:, 1]))) or 1.0
+    limit = _DIVERGENCE_FACTOR * span
+    if not np.isfinite([x0, y0, r]).all():
+        report_degenerate("QI", "non_finite", "solve produced inf/nan parameters")
+        return NO_CIRCLE_CENTER(), NO_RADIUS
+    if r > limit or abs(x0) > limit or abs(y0) > limit:
+        report_degenerate(
+            "QI",
+            "diverged",
+            f"r={r:.3g}, centre=({x0:.3g}, {y0:.3g}) against a point spread "
+            f"of {span:.3g} px",
+        )
+        return NO_CIRCLE_CENTER(), NO_RADIUS
+
+    # No `constraints` parameter by design. QI solves for a single algebraic
+    # circle rather than scoring a population of candidates, so a bound could
+    # only reject that one solution -- it could never guarantee returning an
+    # in-bounds circle when one exists. A prior belongs where it can select
+    # among candidates (CIBICA, RHT, RCD) or steer the search (HOUGH); bolted
+    # on here it would just convert a slightly-out-of-range fit into a
+    # failure, which scores worse than the fit it discarded. Filter the
+    # returned circle at the call site if that is what you want.
+    #
+    # Swapped here so every estimator returns (x=col, y=row); the algorithm
+    # works in the (row, col) order of the input points.
+    center = np.array([y0, x0])
 
     return center, float(r)
 

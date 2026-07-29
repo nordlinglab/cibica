@@ -11,10 +11,10 @@ Reference:
 from itertools import combinations
 
 import numpy as np
-from scipy import stats
 from scipy.spatial.distance import cdist
 
 from cibica._rng import resolve_rng
+from cibica._sentinel import NO_CIRCLE
 
 # Enumerating C(n, 3) to sample `n_triplets` of it costs O(n^3) time and memory
 # -- 4.5 M tuples and 321 MB at n = 300.  Below this many combinations the
@@ -71,17 +71,41 @@ def sample_triplets(n_points, n_triplets, rng=None):
     return out
 
 
-def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
+#: Determinant magnitude at or below which a triplet counts as collinear. A
+#: triplet collinear to within rounding divides by a near-zero determinant and
+#: yields an enormous radius, so it is discarded here rather than left to the
+#: rmax filter. RHT applies the same 1e-10 cutoff at rht.py.
+_COLLINEAR_TOL = 1e-10
+
+
+def vectorized_XYR(
+    p1,
+    p2,
+    p3,
+    xmax=50,
+    ymax=50,
+    rmin=4,
+    rmax=30,
+    minval=-np.inf,
+    margin=np.inf,
+    collinear_tol=_COLLINEAR_TOL,
+):
     """
     Vectorized circle fitting through triplets of points.
 
     This is the core CIBICA function that fits circles through multiple
     triplets simultaneously and filters invalid results using the same
     three criteria as 3C-FBI:
-      Filter 1 — Collinearity:  discard if det == 0 (exact).
-      Filter 2 — Center bounds: discard if center lies outside the
-                rectangle [minval, xmax+20] x [minval, ymax+20].
-                Defaults: minval = -20 (symmetric ±20 px tolerance).
+      Filter 1 — Collinearity:  discard if |det| <= collinear_tol.
+                Default 1e-10, the cutoff RHT uses for the same test. A
+                triplet collinear to within floating-point rounding divides
+                by a near-zero determinant and yields a huge radius, so it is
+                rejected here rather than left to Filter 3.
+      Filter 2 — Center bounds: discard if the rounded center lies outside
+                [minval, xmax+margin-1] x [minval, ymax+margin-1].
+                Off by default (minval = -inf, margin = inf); Filter 3's rmax
+                already confines a center to within rmax of one of the
+                triplet's edge points. Pass minval and margin to bound it.
       Filter 3 — Radius range:  discard if r < rmin or r > rmax.
                 Defaults: rmin = 4, rmax = 30 (px), tuned for the
                 real-world Exp A sphere radii. Override for synthetic
@@ -96,7 +120,13 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
     rmin, rmax : float, optional
         Minimum and maximum allowed radius (default: 4, 30 px).
     minval : float, optional
-        Minimum allowed center coordinate (default: -20 — symmetric tol.).
+        Minimum allowed center coordinate (default: -inf, i.e. no bound).
+    collinear_tol : float, optional
+        Determinant magnitude at or below which a triplet is treated as
+        collinear (default: 1e-10). Pass 0.0 for the historical exact test.
+    margin : float, optional
+        Slack added above xmax/ymax for the centre bound (default: inf,
+        i.e. no bound).
 
     Returns
     -------
@@ -110,8 +140,8 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
         p1[:, 1] - p2[:, 1]
     )
 
-    # Filter 1 — Collinearity: discard if det == 0 (exact)
-    zeros = np.where(det == 0)
+    # Filter 1 — Collinearity: discard if |det| <= collinear_tol
+    zeros = np.where(np.abs(det) <= collinear_tol)
     p1 = np.delete(p1, zeros, 0)
     p2 = np.delete(p2, zeros, 0)
     p3 = np.delete(p3, zeros, 0)
@@ -122,24 +152,16 @@ def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
     cx = (bc * (p2[:, 1] - p3[:, 1]) - cd * (p1[:, 1] - p2[:, 1])) / det
     cy = ((p1[:, 0] - p2[:, 0]) * cd - (p2[:, 0] - p3[:, 0]) * bc) / det
 
-    # Filter 2 — Center bounds: symmetric ±20 px around [0, xmax] x [0, ymax]
-    # (controlled by `minval`; default -20)
-    deletes = np.where(cx < minval)
-    cx = np.delete(cx, deletes, 0)
-    cy = np.delete(cy, deletes, 0)
-    p1 = np.delete(p1, deletes, 0)
-
-    deletes = np.where(cy < minval)
-    cx = np.delete(cx, deletes, 0)
-    cy = np.delete(cy, deletes, 0)
-    p1 = np.delete(p1, deletes, 0)
-
-    deletes = np.where(cx > xmax + 20)
-    cx = np.delete(cx, deletes, 0)
-    cy = np.delete(cy, deletes, 0)
-    p1 = np.delete(p1, deletes, 0)
-
-    deletes = np.where(cy > ymax + 20)
+    # Filter 2 — Center bounds, off by default. The test uses the rounded
+    # centre so that a bound admits exactly the centres median_3d compares.
+    cx_enc = np.round(cx)
+    cy_enc = np.round(cy)
+    deletes = np.where(
+        (cx_enc < minval)
+        | (cy_enc < minval)
+        | (cx_enc > xmax + margin - 1)
+        | (cy_enc > ymax + margin - 1)
+    )
     cx = np.delete(cx, deletes, 0)
     cy = np.delete(cy, deletes, 0)
     p1 = np.delete(p1, deletes, 0)
@@ -164,12 +186,19 @@ def median_3d(x, y, r, xmax=100, ymax=100):
     """
     Calculate median in 3D space (x, y, r) using mode-based approach.
 
+    Takes the most frequent whole-pixel (r, x, y) triple directly, via
+    ``np.unique(..., axis=0)``. Comparing the triples themselves represents
+    any centre exactly, whatever Filter 2 admits, so the estimator is
+    independent of the filter bounds.
+
+    Ties resolve to the lexicographically smallest ``(r, x, y)``.
+
     Parameters
     ----------
     x, y, r : numpy.ndarray
         Arrays of circle parameters
     xmax, ymax : int
-        Maximum dimensions for encoding
+        Unused; retained so existing callers keep working.
 
     Returns
     -------
@@ -177,18 +206,9 @@ def median_3d(x, y, r, xmax=100, ymax=100):
         Median circle parameters
     """
     X = np.round(np.c_[r, x, y], 0)
-    c = np.array([[ymax * xmax], [ymax], [1]])
-    identifier = X.dot(c)
-
-    data = stats.mode(identifier, keepdims=True)
-    mode = int(data.mode.ravel()[0])
-
-    y_out = mode % ymax
-    aux = (mode - y_out) / ymax
-    x_out = aux % xmax
-    r_out = (aux - x_out) / xmax
-
-    return x_out, y_out, r_out
+    rows, counts = np.unique(X, axis=0, return_counts=True)
+    r_out, x_out, y_out = rows[np.argmax(counts)]
+    return float(x_out), float(y_out), float(r_out)
 
 
 def LS_circle(x, y):
@@ -228,7 +248,8 @@ def CIBICA(
     refinement=True,
     rmin=4,
     rmax=30,
-    minval=-20,
+    minval=-np.inf,
+    margin=np.inf,
     rng=None,
 ):
     """
@@ -254,7 +275,12 @@ def CIBICA(
         Allowed radius range (default: 4, 30 px — original CIBICA values).
         Override for synthetic experiments where r0 falls outside this range.
     minval : float, optional
-        Lower bound on center coordinate (default: -20 — symmetric tol.).
+        Lower bound on center coordinate (default: -inf, i.e. no bound).
+    margin : float, optional
+        Slack added above xmax/ymax for the centre bound (default: inf,
+        i.e. no bound). The
+        defaults confine centres to the image rectangle, which is the only
+        region median_3d can encode; see vectorized_XYR.
     rng : numpy.random.Generator, int, or None, optional
         Source of randomness for triplet sampling. Pass an explicit generator
         when calling from worker processes so results do not depend on
@@ -272,7 +298,7 @@ def CIBICA(
     >>> x, y, r = CIBICA(edgels, n_triplets=10000)
     """
     if len(coord) < 3:
-        return np.nan, np.nan, np.nan
+        return NO_CIRCLE
 
     # Sample triplets without enumerating C(n, 3); see sample_triplets.
     RandomSample = sample_triplets(len(coord), n_triplets, rng)
@@ -284,7 +310,7 @@ def CIBICA(
 
     # Fit circles
     cx, cy, radius = vectorized_XYR(
-        p1, p2, p3, xmax, ymax, rmin=rmin, rmax=rmax, minval=minval
+        p1, p2, p3, xmax, ymax, rmin=rmin, rmax=rmax, minval=minval, margin=margin
     )
 
     # Get median estimate

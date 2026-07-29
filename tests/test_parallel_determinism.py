@@ -84,8 +84,9 @@ def _as_comparable(results):
     for i, j, n_edgels, per_method in results:
         assert per_method is not None, f"cell ({i},{j}) failed to preprocess"
         flat[(i, j, "n_edgels")] = n_edgels
-        for m, (js, ts) in per_method.items():
+        for m, (js, ts, ds) in per_method.items():
             flat[(i, j, m)] = js.copy()
+            flat[(i, j, f"{m}:declined")] = ds.copy()
     return flat
 
 

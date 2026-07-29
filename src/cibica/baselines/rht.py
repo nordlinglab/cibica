@@ -16,10 +16,12 @@ Main function: rht(edgels, **kwargs)
 import numpy as np
 from scipy.special import comb
 
+from cibica._constraints import Constraints, report_active, reporting_enabled
 from cibica._rng import random_subsets, resolve_rng
+from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
 
 
-def rht(edgels, num_iterations=1000, threshold=5, rng=None):
+def rht(edgels, num_iterations=1000, threshold=5, rng=None, constraints=None):
     """
     Fit a circle to edge points using Randomized Hough Transform.
 
@@ -49,17 +51,23 @@ def rht(edgels, num_iterations=1000, threshold=5, rng=None):
         Source of randomness for triplet sampling. Pass an explicit generator
         when calling from worker processes; ``None`` derives one from the
         global NumPy stream.
+    constraints : cibica.Constraints, optional
+        Radius and centre bounds a candidate must satisfy. ``None`` (default)
+        searches unbounded, which is the historical behaviour. When a bound
+        discards what would otherwise have won, that is reported on stderr if
+        reporting is enabled.
 
     Returns
     -------
     center : numpy.ndarray
-        Array [cx, cy] of circle center coordinates
+        Array ``[x_col, y_row]`` of circle center coordinates
     radius : float
         Circle radius
 
     Notes
     -----
-    Returns ([-1, -1], -1) if no valid circle is found.
+    Returns (``[nan, nan]``, ``nan``) if no valid circle is found;
+    test it with :func:`cibica.is_no_circle`.
 
     The algorithm automatically limits iterations to C(n,3) to avoid
     sampling the same triplet multiple times.
@@ -80,7 +88,7 @@ def rht(edgels, num_iterations=1000, threshold=5, rng=None):
     """
     # Input validation
     if len(edgels) < 3:
-        return np.array([-1, -1]), -1
+        return NO_CIRCLE_CENTER(), NO_RADIUS
 
     n_points = edgels.shape[0]
 
@@ -90,6 +98,12 @@ def rht(edgels, num_iterations=1000, threshold=5, rng=None):
 
     best_circle = None
     best_score = 0
+    # The unconstrained winner is tracked in parallel purely so an activated
+    # bound can be reported; it is not evaluated when reporting is off.
+    free_circle = None
+    free_score = 0
+    cons = constraints if constraints is not None else Constraints()
+    report = reporting_enabled() and not cons.is_empty
 
     # Draw every triplet up front: one vectorised call replaces num_iterations
     # Python-level choice() calls, which dominated this loop's overhead.
@@ -135,16 +149,35 @@ def rht(edgels, num_iterations=1000, threshold=5, rng=None):
         geometric_distances = np.abs(distances_to_center - radius)
         score = np.sum(geometric_distances < threshold)
 
-        # Update best circle if this one has more support
-        if score > best_score:
+        # center_x indexes edgels[:, 0] (the row), so the constraint check --
+        # which is stated in (x=col, y=row) -- takes them the other way round.
+        if score > free_score:
+            free_score = score
+            free_circle = (center_x, center_y, radius)
+        if score > best_score and cons.accepts(center_y, center_x, radius):
             best_score = score
             best_circle = (center_x, center_y, radius)
 
+    if report and free_circle is not None:
+        free_xyr = (free_circle[1], free_circle[0], free_circle[2])
+        best_xyr = (
+            None
+            if best_circle is None
+            else (best_circle[1], best_circle[0], best_circle[2])
+        )
+        violated = cons.violation(*free_xyr)
+        if violated is not None and (
+            best_xyr is None or not np.allclose(best_xyr, free_xyr)
+        ):
+            report_active("RHT", violated, best_xyr, free_xyr)
+
     # Return best circle found
     if best_circle is None:
-        return np.array([-1, -1]), -1
+        return NO_CIRCLE_CENTER(), NO_RADIUS
 
-    center = np.array([best_circle[0], best_circle[1]])
+    # Swapped here so every estimator returns (x=col, y=row); the algorithm
+    # works in the (row, col) order of the input points.
+    center = np.array([best_circle[1], best_circle[0]])
     radius = best_circle[2]
 
     return center, float(radius)
