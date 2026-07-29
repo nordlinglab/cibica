@@ -16,8 +16,10 @@ Main function: rht(edgels, **kwargs)
 import numpy as np
 from scipy.special import comb
 
+from cibica._rng import random_subsets, resolve_rng
 
-def rht(edgels, num_iterations=1000, threshold=5):
+
+def rht(edgels, num_iterations=1000, threshold=5, rng=None):
     """
     Fit a circle to edge points using Randomized Hough Transform.
 
@@ -43,6 +45,10 @@ def rht(edgels, num_iterations=1000, threshold=5):
     threshold : float, optional
         Distance threshold for inlier counting (default: 5)
         Points within this distance from the circle are counted as votes
+    rng : numpy.random.Generator, int, or None, optional
+        Source of randomness for triplet sampling. Pass an explicit generator
+        when calling from worker processes; ``None`` derives one from the
+        global NumPy stream.
 
     Returns
     -------
@@ -85,10 +91,12 @@ def rht(edgels, num_iterations=1000, threshold=5):
     best_circle = None
     best_score = 0
 
+    # Draw every triplet up front: one vectorised call replaces num_iterations
+    # Python-level choice() calls, which dominated this loop's overhead.
+    triplets = random_subsets(resolve_rng(rng), n_points, 3, num_iterations)
+
     for iteration in range(num_iterations):
-        # Randomly select 3 points
-        indices = np.random.choice(n_points, 3, replace=False)
-        sample = edgels[indices]
+        sample = edgels[triplets[iteration]]
 
         # Construct linear system to solve for circle parameters
         # Circle equation: x² + y² + ax + by + c = 0

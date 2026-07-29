@@ -8,12 +8,67 @@ Reference:
     The median-based approach provides robustness to outliers.
 """
 
-import random
 from itertools import combinations
 
 import numpy as np
 from scipy import stats
 from scipy.spatial.distance import cdist
+
+from cibica._rng import resolve_rng
+
+# Enumerating C(n, 3) to sample `n_triplets` of it costs O(n^3) time and memory
+# -- 4.5 M tuples and 321 MB at n = 300.  Below this many combinations the
+# enumeration is cheaper than rejection sampling; above it, triplets are drawn
+# directly.
+_ENUM_THRESHOLD = 20_000
+
+
+def sample_triplets(n_points, n_triplets, rng=None):
+    """Draw distinct unordered index triplets uniformly from ``C(n_points, 3)``.
+
+    Args:
+        n_points: Number of points to choose from.
+        n_triplets: Number of distinct triplets wanted.  Silently clamped to
+            ``C(n_points, 3)`` when fewer combinations exist.
+        rng: Generator, seed, or ``None`` (see :func:`cibica._rng.resolve_rng`).
+
+    Returns:
+        numpy.ndarray: Array of shape ``(k, 3)`` with ``k <= n_triplets``, each
+        row strictly increasing.
+
+    Notes:
+        Equivalent in distribution to sampling without replacement from the
+        full combination list, but never materialises it.  Sorted triples of
+        i.i.d. uniform indices are uniform over combinations once ties are
+        rejected, since each unordered triplet has exactly ``3! = 6`` equally
+        likely orderings.
+    """
+    rng = resolve_rng(rng)
+    total = n_points * (n_points - 1) * (n_points - 2) // 6
+    k = min(n_triplets, total)
+    if k <= 0:
+        return np.empty((0, 3), dtype=np.int64)
+
+    if total <= _ENUM_THRESHOLD:
+        combi = np.array(list(combinations(range(n_points), 3)), dtype=np.int64)
+        return combi[rng.choice(total, size=k, replace=False)]
+
+    seen = set()
+    out = np.empty((k, 3), dtype=np.int64)
+    filled = 0
+    while filled < k:
+        batch = rng.integers(0, n_points, size=(2 * (k - filled) + 16, 3))
+        batch.sort(axis=1)
+        batch = batch[(batch[:, 0] < batch[:, 1]) & (batch[:, 1] < batch[:, 2])]
+        for row in batch:
+            key = (int(row[0]), int(row[1]), int(row[2]))
+            if key not in seen:
+                seen.add(key)
+                out[filled] = row
+                filled += 1
+                if filled == k:
+                    break
+    return out
 
 
 def vectorized_XYR(p1, p2, p3, xmax=50, ymax=50, rmin=4, rmax=30, minval=-20):
@@ -174,6 +229,7 @@ def CIBICA(
     rmin=4,
     rmax=30,
     minval=-20,
+    rng=None,
 ):
     """
     Circle detection using CIBICA method.
@@ -199,6 +255,10 @@ def CIBICA(
         Override for synthetic experiments where r0 falls outside this range.
     minval : float, optional
         Lower bound on center coordinate (default: -20 — symmetric tol.).
+    rng : numpy.random.Generator, int, or None, optional
+        Source of randomness for triplet sampling. Pass an explicit generator
+        when calling from worker processes so results do not depend on
+        scheduling order; ``None`` derives one from the global NumPy stream.
 
     Returns
     -------
@@ -214,10 +274,8 @@ def CIBICA(
     if len(coord) < 3:
         return np.nan, np.nan, np.nan
 
-    # Generate combinations and sample
-    combi = list(combinations(np.arange(len(coord)), 3))
-    N = min(n_triplets, len(combi))
-    RandomSample = np.array(random.sample(combi, N))
+    # Sample triplets without enumerating C(n, 3); see sample_triplets.
+    RandomSample = sample_triplets(len(coord), n_triplets, rng)
 
     # Get triplet coordinates
     p1 = coord[RandomSample[:, 0]]

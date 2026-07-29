@@ -17,6 +17,8 @@ Main function: rcd(edgels, **kwargs)
 
 import numpy as np
 
+from cibica._rng import random_subsets, resolve_rng
+
 
 def _distance(p1, p2):
     """
@@ -82,6 +84,7 @@ def rcd(
     distance_threshold=2,
     min_inliers=10,
     min_distance=None,
+    rng=None,
 ):
     """
     Fit a circle to edge points using RANSAC with Distance Constraints.
@@ -121,6 +124,10 @@ def rcd(
         (three points pairwise >= 20 apart cannot exist on a circle of
         diameter < ~23). This prevents degenerate configurations from
         clustered points; pass an explicit value to override.
+    rng : numpy.random.Generator, int, or None, optional
+        Source of randomness for point sampling. Pass an explicit generator
+        when calling from worker processes; ``None`` derives one from the
+        global NumPy stream.
 
     Returns
     -------
@@ -166,10 +173,11 @@ def rcd(
     best_circle = None
     best_inliers = 0
 
+    # Draw every quadruple up front; see the equivalent note in rht().
+    quads = random_subsets(resolve_rng(rng), edgels.shape[0], 4, num_iterations)
+
     for iteration in range(num_iterations):
-        # Randomly sample 4 points
-        indices = np.random.choice(edgels.shape[0], 4, replace=False)
-        sample = edgels[indices]
+        sample = edgels[quads[iteration]]
 
         # Try all 4 possible triplet combinations (leave one out)
         for i in range(4):
