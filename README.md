@@ -94,9 +94,31 @@ for method in cibica.METHODS:          # ("cibica", "hough", "rht", "rcd", "qi")
 
 # A single method, with options:
 x, y, r = cibica.estimate("image.jpg", method="cibica", n_triplets=1000)
+
+# The same function accepts a sequence and preserves input order:
+circles = cibica.estimate(
+    ["frame-1.png", "frame-2.png"],
+    method="cibica",
+    n_jobs=0,
+    seed=42,
+)
 ```
 
 `estimate` also accepts edge points directly (an `(N, 2)` `[[row, col], ...]` array or a `.csv`/`.txt`/`.npy` file) for every method except `hough`.
+For sequence inputs, `n_jobs=0` uses one worker per detected performance core and `n_jobs=1` executes in-process.
+With `seed` set, stochastic results are independent of `n_jobs`.
+Each method currently returns one circle per input image.
+Although OpenCV can produce several Hough candidates internally, the CIBICA, Hough, RHT, RCD, and QI interfaces all select and return one circle.
+
+The CLI accepts the same input multiplicity:
+
+```bash
+cibica cibica frames/*.png --jobs 0 --seed 42 -o results.csv
+cibica compare frames/*.png --methods cibica,hough -o overlay.pdf
+```
+
+Data outputs contain one row per input and method.
+Overlay outputs produce one file per input.
 
 ## Reproducing the study
 
@@ -150,8 +172,9 @@ uv run python scripts/run_experiment.py --full --replicates 100 --seed 42
 `--replicates` also averages the main five-method experiment, so a full run takes
 several hours. Table 6 always carries its `mean_range` and `mean_CV` columns;
 without `--full` they are present but zero (no run-to-run spread at a single run).
-The reusable figure/table generators live in `cibica.visualization` (one module
-per artefact) so either script can call them.
+Study computation lives in `cibica.experiments`, numerical statistics in
+`cibica.analysis`, and plotting in `cibica.visualization`.
+The scripts are composition roots that connect those layers and write outputs.
 
 All outputs are written under **`./results/`** (created in the current working directory):
 the CSV tables (`Jaccard_*`, `Table*`, `Summary_*`, `Stats_*`) in `results/tables/`,

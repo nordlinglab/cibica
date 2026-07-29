@@ -17,7 +17,9 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless: must precede any pyplot import
 
+import cv2
 import numpy as np
+import pandas as pd
 import pytest
 
 from cibica.visualization import _common
@@ -25,6 +27,10 @@ from cibica.visualization.ablation import cibica_no_consensus
 from cibica.visualization.error_histogram import plot_error_histogram
 from cibica.visualization.jaccard_distribution import plot_jaccard_distribution
 from cibica.visualization.pixel_combinations import plot_pixel_combinations
+from cibica.visualization.qualitative import (
+    plot_failure_gallery_result,
+    plot_visual_comparison_result,
+)
 from cibica.visualization.triplet_sweep import plot_jaccard_difference
 
 # ---------------------------------------------------------------------------
@@ -197,3 +203,62 @@ def test_plot_jaccard_difference_writes_files_and_zero_reference(tmp_path):
     assert (tmp_path / "Fig17_JaccardDifference_unit.png").is_file()
     # The reference column (largest N) minus itself is identically zero.
     assert np.allclose(mean_j[10000] - mean_j[max(n_list)], 0.0)
+
+
+def _qualitative_results(tmp_path):
+    image_dir = tmp_path / "black_sphere_ROI"
+    image_dir.mkdir()
+    rows = []
+    truth = []
+    for index in range(8):
+        filename = f"frame_{index}"
+        image = np.zeros((40, 40, 3), dtype=np.uint8)
+        cv2.circle(image, (20, 20), 10, (255, 255, 255), 1)
+        cv2.imwrite(str(image_dir / f"{filename}.png"), image)
+        truth.append({"Filename": filename, "X": 20, "Y": 20, "R": 10})
+        rows.append(
+            {
+                "Filename": filename,
+                "x_cibica": 20,
+                "y_cibica": 20,
+                "r_cibica": 10,
+                "j_cibica": 0.7 + index * 0.02,
+                "x_cht": 20,
+                "y_cht": 20,
+                "r_cht": 9,
+                "j_cht": 0.6 + index * 0.01,
+                "x_qi": 20,
+                "y_qi": 20,
+                "r_qi": 9,
+                "j_qi": 0.9 - index * 0.01,
+            }
+        )
+    return pd.DataFrame(truth), pd.DataFrame(rows)
+
+
+def test_qualitative_plots_consume_precomputed_results(tmp_path):
+    ground_truth, scores = _qualitative_results(tmp_path)
+    colors = [(180, 119, 31), (40, 39, 214)]
+    gt_color = (60, 200, 60)
+    visual_paths = plot_visual_comparison_result(
+        tmp_path,
+        ground_truth,
+        scores,
+        output_dir=tmp_path,
+        colors=colors,
+        gt_color=gt_color,
+        progress=lambda *_: None,
+    )
+    failure_paths = plot_failure_gallery_result(
+        tmp_path,
+        ground_truth,
+        scores,
+        output_dir=tmp_path,
+        colors=colors,
+        gt_color=gt_color,
+        progress=lambda *_: None,
+    )
+    assert len(visual_paths) == 2
+    assert len(failure_paths) == 2
+    assert (tmp_path / "Fig15_VisualComparison.png").is_file()
+    assert (tmp_path / "Fig16_FailureGallery.pdf").is_file()

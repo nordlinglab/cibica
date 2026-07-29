@@ -9,13 +9,10 @@ motivates CIBICA's fixed triplet-sampling budget.
 """
 
 import os
+from importlib import import_module
 
-import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-
-from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
 
 _BLUE = "#1f77b4"
 
@@ -31,36 +28,9 @@ def _apply_darkgrid(ax):
 
 
 def compute_edge_counts(data_dir, config_name="GL82"):
-    """Edge-pixel count per frame at one green-level preprocessing configuration.
-
-    Args:
-        data_dir: dataset directory containing ``Ground_Truth.csv`` and
-            ``black_sphere_ROI/``.
-        config_name: green-level config name. Defaults to ``"GL82"``, the
-            reference config at which the per-frame triplet-combination
-            distribution matches the manuscript (majority < 100k, a few > 1M).
-
-    Returns:
-        A 1-D float array with one edge-pixel count per loadable frame.
-    """
-    gt = pd.read_csv(os.path.join(str(data_dir), "Ground_Truth.csv"))
-    cfg = next(
-        (c for c in get_preprocessing_configs() if c["name"] == config_name), None
-    )
-    if cfg is None or cfg["green_level"] is None:
-        raise ValueError(f"{config_name!r} is not a green-level configuration")
-
-    counts = []
-    for fn in gt["Filename"].tolist():
-        bs = cv2.imread(os.path.join(str(data_dir), "black_sphere_ROI", fn + ".png"))
-        if bs is None:
-            continue
-        try:
-            _, _, edgels = preprocess_green_level(bs, cfg["green_level"])
-        except Exception:
-            continue
-        counts.append(len(edgels))
-    return np.asarray(counts, dtype=float)
+    """Compatibility wrapper for the relocated edge-count computation."""
+    relocated = import_module("cibica.experiments.edge_counts").compute_edge_counts
+    return relocated(data_dir, config_name)
 
 
 def plot_pixel_combinations(edge_counts, output_dir=".", date_tag="", progress=print):

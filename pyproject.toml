@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cibica"
-version = "1.3.0"
+version = "1.4.0"
 description = "Circle estimation by CIBICA with example datasets."
 readme = "README.md"
 requires-python = ">=3.12.11"
@@ -86,9 +86,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # rules N802 (function), N803 (argument) and N806 (local) are scoped out for
 # these files only. New modules (io, estimate, cli) keep full naming checks.
 [tool.ruff.lint.per-file-ignores]
-"src/cibica/core.py" = ["N802", "N803", "N806"]
+"src/cibica/estimators/cibica.py" = ["N802", "N803", "N806"]
 "src/cibica/preprocessing.py" = ["N802", "N803", "N806"]
-"src/cibica/baselines/*.py" = ["N802", "N803", "N806"]
+"src/cibica/estimators/*.py" = ["N802", "N803", "N806"]
+"src/cibica/reproduction.py" = ["N802", "N803", "N806"]
 "scripts/run_experiment.py" = ["N802", "N803", "N806"]
 "scripts/run_constraint_ablation.py" = ["N802", "N803", "N806"]
 
@@ -96,6 +97,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 python_version = "3.12"
 warn_return_any = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pandas.*", "scipy.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

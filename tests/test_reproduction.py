@@ -23,7 +23,6 @@ when it is absent (e.g. when running against an installed wheel).
 from __future__ import annotations
 
 import random
-import sys
 from pathlib import Path
 
 import matplotlib
@@ -33,8 +32,11 @@ matplotlib.use("Agg")  # headless: must precede any pyplot import
 import numpy as np
 import pytest
 
+from cibica.analysis import labeling as rla
 from cibica.visualization import (
     compute_edge_counts,
+    plot_error_histogram,
+    plot_jaccard_distribution,
     plot_pixel_combinations,
     run_ablation_study,
     run_triplet_sweep,
@@ -43,17 +45,11 @@ from cibica.visualization import (
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 GROUND_TRUTH = DATA_DIR / "Ground_Truth.csv"
 LABELED = DATA_DIR / "Black_Sphere_Labelling_A.csv"
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 pytestmark = pytest.mark.skipif(
     not GROUND_TRUTH.is_file(),
     reason="dataset not present (data/ is separate from the package)",
 )
-
-# The labeling analysis lives in the scripts/ directory, not the package.
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
-import run_labeling_analysis as rla  # noqa: E402
 
 _QUIET = lambda *_a, **_k: None  # noqa: E731  (silence module progress output)
 
@@ -172,7 +168,8 @@ def test_labelling_pass_selection():
 def test_table1_csv_matches_published_layout(labeling_arrays, tmp_path):
     """The Table 1 CSV reproduces the manuscript's two-column percentile layout."""
     jaccards, _e, _r = labeling_arrays
-    df = rla.save_table1(jaccards, output_dir=str(tmp_path))
+    df = rla.make_table1(jaccards)
+    df.to_csv(tmp_path / "Table1_LabelingConsistency.csv", index=False)
     assert (tmp_path / "Table1_LabelingConsistency.csv").is_file()
     assert list(df["Percentile_pct"]) == [0.1, 1, 2.5, 5, 10, 15, 25, 50, 75, 90]
     # Each tabulated value is the empirical Jaccard percentile of the data.
@@ -183,7 +180,7 @@ def test_table1_csv_matches_published_layout(labeling_arrays, tmp_path):
 
 def test_fig8_jaccard_distribution_written(labeling_arrays, tmp_path):
     jaccards, _e, _r = labeling_arrays
-    rla.plot_jaccard_distribution(jaccards, output_dir=str(tmp_path))
+    plot_jaccard_distribution(jaccards, output_dir=str(tmp_path))
     assert (tmp_path / "Fig8_JaccardDistribution.png").is_file()
     assert (tmp_path / "Fig8_JaccardDistribution.pdf").is_file()
 
@@ -195,7 +192,7 @@ def test_fig7_error_histogram_written(labeling_arrays, tmp_path):
     # error/radius arrays take both signs but must stay finite.
     assert np.isfinite(errors).all() and np.isfinite(ratios).all()
     assert (errors < 0).any() and (errors > 0).any()
-    rla.plot_error_histogram(errors, ratios, output_dir=str(tmp_path))
+    plot_error_histogram(errors, ratios, output_dir=str(tmp_path))
     assert (tmp_path / "Fig7_ErrorHistogram.png").is_file()
     assert (tmp_path / "Fig7_ErrorHistogram.pdf").is_file()
 

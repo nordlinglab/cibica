@@ -12,20 +12,30 @@ sidedness of the focal Wilcoxon test, and the timing of the preprocessing
 stage.
 """
 
+from cibica.analysis.circle_geometry import (
+    jaccard_circles,
+    least_squares_circle,
+)
 from cibica.analysis.leave_one_subject_out import leave_one_subject_out
 from cibica.analysis.per_subject_statistics import per_subject_statistics
-from cibica.analysis.preprocessing_throughput import (
-    end_to_end_fps,
-    preprocessing_throughput,
+from cibica.analysis.preprocessing_throughput import end_to_end_fps
+from cibica.analysis.robust_statistics import (
+    hodges_lehmann_ci,
+    rank_biserial,
+    significance_stars,
 )
 from cibica.analysis.subjects import subject_ids
 from cibica.analysis.wilcoxon_signed_rank import wilcoxon_signed_rank
 
 __all__ = [
     "end_to_end_fps",
+    "jaccard_circles",
+    "least_squares_circle",
+    "hodges_lehmann_ci",
     "leave_one_subject_out",
     "per_subject_statistics",
-    "preprocessing_throughput",
+    "rank_biserial",
+    "significance_stars",
     "subject_ids",
     "wilcoxon_signed_rank",
 ]

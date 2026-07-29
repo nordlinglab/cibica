@@ -13,9 +13,6 @@
   https://doi.org/10.1016/j.nima.2024.169775.
 """
 
-from cibica.baselines.hough import HOUGH
-from cibica.baselines.qi import qi_2024
-from cibica.baselines.rcd import rcd
-from cibica.baselines.rht import rht
+from cibica.estimators import HOUGH, qi_2024, rcd, rht
 
 __all__ = ["HOUGH", "rht", "rcd", "qi_2024"]

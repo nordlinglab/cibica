@@ -41,10 +41,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+from typing import cast
 
 from cibica import __version__
-from cibica.estimate import METHODS, estimate
-from cibica.io import load_image, save_result, save_results
+from cibica.estimate import METHODS, Circle, estimate
+from cibica.io import load_image, save_batch_results, save_result, save_results
+from cibica.parallel import pin_compute_threads
 
 # Translate CLI flags to each estimator's keyword arguments.
 _METHOD_KWARGS = {
@@ -90,7 +93,11 @@ _METHOD_KWARGS = {
 
 
 def _add_common(p: argparse.ArgumentParser) -> None:
-    p.add_argument("input", help="image file, or edge-point file (.csv/.txt/.npy)")
+    p.add_argument(
+        "input",
+        nargs="+",
+        help="image file(s), or edge-point file(s) (.csv/.txt/.npy)",
+    )
     p.add_argument(
         "-o",
         "--output",
@@ -116,6 +123,19 @@ def _add_common(p: argparse.ArgumentParser) -> None:
         "--json",
         action="store_true",
         help="print the result as JSON on stdout instead of 'x y r'",
+    )
+    p.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=0,
+        help="worker processes for multiple inputs (0 = one per performance core, "
+        "1 = sequential)",
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        help="seed stochastic methods; sequence results are independent of --jobs",
     )
     p.add_argument(
         "-q",
@@ -184,6 +204,18 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _is_data_output(path: str) -> bool:
+    return Path(path).suffix.lower() in {".json", ".csv", ".txt"}
+
+
+def _output_for_input(output: str, source: str) -> Path:
+    """Derive one overlay output path for one multi-input source."""
+    base = Path(output)
+    suffix = base.suffix or ".pdf"
+    stem = base.stem if base.suffix else base.name
+    return base.with_name(f"{stem}_{Path(source).stem}{suffix}")
+
+
 def _run_compare(args: argparse.Namespace) -> int:
     """Run several methods on one input; optionally save a combined output.
 
@@ -204,81 +236,123 @@ def _run_compare(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        inputs = list(args.input)
+        single = len(inputs) == 1
         green_ref = load_image(args.green_ref) if args.green_ref else None
-        circles = [
-            estimate(
-                args.input, method=m, preprocess=args.preprocess, green_ref=green_ref
+        by_method = []
+        for method in methods:
+            estimated = estimate(
+                inputs[0] if single else inputs,
+                method=method,
+                n_jobs=args.jobs,
+                seed=args.seed,
+                preprocess=args.preprocess,
+                green_ref=green_ref,
             )
-            for m in methods
-        ]
+            by_method.append(
+                [cast(Circle, estimated)] if single else cast(list[Circle], estimated)
+            )
+        circles_by_input: list[tuple[Circle, ...]] = list(zip(*by_method, strict=True))
     except (ValueError, FileNotFoundError) as exc:
         print(f"cibica: compare: {exc}", file=sys.stderr)
         return 2
 
     if not args.quiet:
         print(
-            f"method=compare({','.join(methods)}) input={args.input}", file=sys.stderr
+            f"method=compare({','.join(methods)}) input={','.join(inputs)}",
+            file=sys.stderr,
         )
     if args.json:
         import json
 
-        print(
-            json.dumps(
-                {
-                    "input": args.input,
-                    "results": [
-                        {"method": m, "x": x, "y": y, "r": r}
-                        for m, (x, y, r) in zip(methods, circles)
-                    ],
-                }
+        if single:
+            print(
+                json.dumps(
+                    {
+                        "input": inputs[0],
+                        "results": [
+                            {"method": m, "x": x, "y": y, "r": r}
+                            for m, (x, y, r) in zip(
+                                methods, circles_by_input[0], strict=True
+                            )
+                        ],
+                    }
+                )
             )
-        )
+        else:
+            rows = [
+                {"input": source, "method": m, "x": x, "y": y, "r": r}
+                for source, circles in zip(inputs, circles_by_input, strict=True)
+                for m, (x, y, r) in zip(methods, circles, strict=True)
+            ]
+            print(json.dumps({"results": rows}))
     else:
-        for m, (x, y, r) in zip(methods, circles):
-            print(f"{m} {x:.6g} {y:.6g} {r:.6g}")
+        for source, circles in zip(inputs, circles_by_input, strict=True):
+            for m, (x, y, r) in zip(methods, circles, strict=True):
+                prefix = f"{source} " if not single else ""
+                print(f"{prefix}{m} {x:.6g} {y:.6g} {r:.6g}")
 
     import math
 
     if not args.quiet:
-        for m, (_, _, r) in zip(methods, circles):
-            if math.isnan(r):
-                print(
-                    f"note: {m} found no circle; it is omitted from any overlay",
-                    file=sys.stderr,
-                )
+        for source, circles in zip(inputs, circles_by_input, strict=True):
+            for m, (_, _, r) in zip(methods, circles, strict=True):
+                if math.isnan(r):
+                    print(
+                        f"note: {m} found no circle in {source}; "
+                        "it is omitted from any overlay",
+                        file=sys.stderr,
+                    )
 
     if args.output:
-        from pathlib import Path
-
-        image = None
-        colors = None
-        if Path(args.output).suffix.lower() not in {".json", ".csv", ".txt"}:
+        if single and _is_data_output(args.output):
+            written = save_results(
+                args.output,
+                list(zip(methods, circles_by_input[0], strict=True)),
+                source=inputs[0],
+            )
+            if not args.quiet:
+                print(f"saved: {written}", file=sys.stderr)
+        elif _is_data_output(args.output):
+            batch_rows = [
+                (source, m, circle)
+                for source, circles in zip(inputs, circles_by_input, strict=True)
+                for m, circle in zip(methods, circles, strict=True)
+            ]
+            written = save_batch_results(args.output, batch_rows)
+            if not args.quiet:
+                print(f"saved: {written}", file=sys.stderr)
+        else:
             from cibica.draw import color_name, select_overlay_colors
 
-            image = load_image(args.input)
-            colors = select_overlay_colors(image, circles[0], len(circles))
-            if not args.quiet:
-                for m, c, (_, _, r) in zip(methods, colors, circles):
-                    if not math.isnan(r):
-                        print(f"colour: {m} = {color_name(c)}", file=sys.stderr)
-        written = save_results(
-            args.output,
-            list(zip(methods, circles)),
-            source=args.input,
-            image=image,
-            colors=colors,
-        )
-        if not args.quiet:
-            print(f"saved: {written}", file=sys.stderr)
+            for source, circles in zip(inputs, circles_by_input, strict=True):
+                image = load_image(source)
+                colors = select_overlay_colors(image, circles[0], len(circles))
+                written = save_results(
+                    args.output if single else _output_for_input(args.output, source),
+                    list(zip(methods, circles, strict=True)),
+                    source=source,
+                    image=image,
+                    colors=colors,
+                )
+                if not args.quiet:
+                    for m, c, (_, _, r) in zip(methods, colors, circles, strict=True):
+                        if not math.isnan(r):
+                            print(f"colour: {m} = {color_name(c)}", file=sys.stderr)
+                    print(f"saved: {written}", file=sys.stderr)
 
-    if all(math.isnan(r) for _, _, r in circles):
-        print(f"cibica: compare: no circle found in {args.input}", file=sys.stderr)
+    if all(math.isnan(r) for circles in circles_by_input for _, _, r in circles):
+        print(
+            f"cibica: compare: no circle found in {','.join(inputs)}",
+            file=sys.stderr,
+        )
         return 1
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI. Returns a process exit code."""
+    pin_compute_threads()
     argv = list(sys.argv[1:] if argv is None else argv)
     # Shorthand: bare 'cibica <input>' (no subcommand) runs the CIBICA method.
     subcommands = (*METHODS, "compare")
@@ -298,52 +372,100 @@ def main(argv: list[str] | None = None) -> int:
     # rather than an uncaught Python traceback (CLIG/POSIX).
     try:
         green_ref = load_image(args.green_ref) if args.green_ref else None
-        x, y, r = estimate(
-            args.input,
+        inputs = list(args.input)
+        single = len(inputs) == 1
+        estimated = estimate(
+            inputs[0] if single else inputs,
             method=args.method,
+            n_jobs=args.jobs,
+            seed=args.seed,
             preprocess=args.preprocess,
             green_ref=green_ref,
             **kwargs,
         )
+        circles = [cast(Circle, estimated)] if single else cast(list[Circle], estimated)
     except (ValueError, FileNotFoundError) as exc:
         print(f"cibica: {args.method}: {exc}", file=sys.stderr)
         return 2
 
     # CLIG (ADR-0252): diagnostics on stderr, machine-readable data on stdout.
     if not args.quiet:
-        print(f"method={args.method} input={args.input}", file=sys.stderr)
+        print(f"method={args.method} input={','.join(inputs)}", file=sys.stderr)
     if args.json:
         import json
 
-        print(
-            json.dumps(
-                {"method": args.method, "input": args.input, "x": x, "y": y, "r": r}
-            )
-        )
+        if single:
+            x, y, r = circles[0]
+            payload = {
+                "method": args.method,
+                "input": inputs[0],
+                "x": x,
+                "y": y,
+                "r": r,
+            }
+        else:
+            payload = {
+                "method": args.method,
+                "results": [
+                    {"input": source, "x": x, "y": y, "r": r}
+                    for source, (x, y, r) in zip(inputs, circles, strict=True)
+                ],
+            }
+        print(json.dumps(payload))
     else:
-        print(f"{x:.6g} {y:.6g} {r:.6g}")
+        if single:
+            x, y, r = circles[0]
+            print(f"{x:.6g} {y:.6g} {r:.6g}")
+        else:
+            for source, (x, y, r) in zip(inputs, circles, strict=True):
+                print(f"{source} {x:.6g} {y:.6g} {r:.6g}")
 
     if args.output:
         # Reload the source image for an overlay; estimate() consumed only a
         # copy. Everything except the data formats is an overlay (raster,
         # .pdf/.svg, or no extension, which save_result defaults to .pdf).
-        from pathlib import Path
-
-        image = None
-        if Path(args.output).suffix.lower() not in {".json", ".csv", ".txt"}:
-            image = load_image(args.input)
-        written = save_result(
-            args.output, (x, y, r), method=args.method, source=args.input, image=image
-        )
-        if not args.quiet:
-            print(f"saved: {written}", file=sys.stderr)
+        if single:
+            x, y, r = circles[0]
+            image = None
+            if not _is_data_output(args.output):
+                image = load_image(inputs[0])
+            written = save_result(
+                args.output,
+                (x, y, r),
+                method=args.method,
+                source=inputs[0],
+                image=image,
+            )
+            if not args.quiet:
+                print(f"saved: {written}", file=sys.stderr)
+        elif _is_data_output(args.output):
+            rows = [
+                (source, args.method, circle)
+                for source, circle in zip(inputs, circles, strict=True)
+            ]
+            written = save_batch_results(args.output, rows)
+            if not args.quiet:
+                print(f"saved: {written}", file=sys.stderr)
+        else:
+            for source, circle in zip(inputs, circles, strict=True):
+                image = load_image(source)
+                written = save_result(
+                    _output_for_input(args.output, source),
+                    circle,
+                    method=args.method,
+                    source=source,
+                    image=image,
+                )
+                if not args.quiet:
+                    print(f"saved: {written}", file=sys.stderr)
 
     import math
 
     # Exit codes (ADR-0252/POSIX): 0 success, 1 general error (no circle found).
-    if math.isnan(r):
+    if all(math.isnan(r) for _, _, r in circles):
         print(
-            f"cibica: {args.method}: no circle found in {args.input}", file=sys.stderr
+            f"cibica: {args.method}: no circle found in {','.join(inputs)}",
+            file=sys.stderr,
         )
         return 1
     return 0

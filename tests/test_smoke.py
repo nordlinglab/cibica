@@ -56,6 +56,25 @@ def test_public_api_present():
         "save_results",
     ]:
         assert hasattr(cibica, name), f"missing public symbol: {name}"
+    for internal in ("save_batch_results", "estimate_many"):
+        assert not hasattr(cibica, internal)
+
+
+def test_estimator_compatibility_imports_resolve_to_relocated_implementations():
+    from cibica.baselines.hough import HOUGH as OLD_HOUGH
+    from cibica.baselines.qi import qi_2024 as old_qi
+    from cibica.baselines.rcd import rcd as old_rcd
+    from cibica.baselines.rht import rht as old_rht
+    from cibica.core import CIBICA as OLD_CIBICA
+    from cibica.estimators import CIBICA, HOUGH, qi_2024, rcd, rht
+
+    assert (OLD_CIBICA, OLD_HOUGH, old_qi, old_rcd, old_rht) == (
+        CIBICA,
+        HOUGH,
+        qi_2024,
+        rcd,
+        rht,
+    )
 
 
 def test_no_bundled_dataset_api():
@@ -111,6 +130,57 @@ def test_estimate_on_edge_points_all_normalized(method):
     assert x == pytest.approx(50.0, abs=tol)  # x is the column centre
     assert y == pytest.approx(40.0, abs=tol)  # y is the row centre
     assert r == pytest.approx(15.0, abs=tol)
+
+
+def test_estimate_accepts_sequence_and_keeps_order():
+    """A sequence of inputs returns one circle per input, in input order."""
+    pts_a = _noisy_circle_rowcol(row_c=40, col_c=50, r=15, n=90)
+    pts_b = _noisy_circle_rowcol(row_c=25, col_c=35, r=10, n=90)
+    out = cibica.estimate(
+        [pts_a, pts_b],
+        method="cibica",
+        n_jobs=1,
+        seed=42,
+        n_triplets=300,
+        rmax=40,
+    )
+    assert len(out) == 2
+    assert out[0][0] == pytest.approx(50.0, abs=2.0)
+    assert out[0][1] == pytest.approx(40.0, abs=2.0)
+    assert out[1][0] == pytest.approx(35.0, abs=2.0)
+    assert out[1][1] == pytest.approx(25.0, abs=2.0)
+
+
+@pytest.mark.parametrize("method", ["cibica", "hough", "rht", "rcd", "qi"])
+def test_estimate_sequence_supports_every_method(method):
+    images = [_circle_image(), _circle_image(col_c=45, row_c=35, r=12)]
+    circles = cibica.estimate(images, method=method, n_jobs=1, seed=12)
+    assert len(circles) == 2
+    assert np.isfinite(circles).all()
+
+
+def test_estimate_empty_sequence_returns_empty_list():
+    assert cibica.estimate([], method="cibica") == []
+
+
+def test_estimate_sequence_preserves_no_circle_sentinel():
+    circles = cibica.estimate(
+        [np.array([[1.0, 1.0], [2.0, 2.0]]), _noisy_circle_rowcol()],
+        method="cibica",
+        n_jobs=1,
+        seed=4,
+    )
+    assert all(np.isnan(value) for value in circles[0])
+    assert np.isfinite(circles[1]).all()
+
+
+def test_estimate_list_of_points_is_still_one_input():
+    """Plain Python ``[[row, col], ...]`` points are not mistaken for a batch."""
+    pts = _noisy_circle_rowcol(row_c=40, col_c=50, r=15, n=90).tolist()
+    x, y, r = cibica.estimate(pts, method="qi")
+    assert x == pytest.approx(50.0, abs=2.0)
+    assert y == pytest.approx(40.0, abs=2.0)
+    assert r == pytest.approx(15.0, abs=2.0)
 
 
 def test_estimate_hough_requires_image():
@@ -259,6 +329,105 @@ def test_cli_qi_method_options(tmp_path):
     assert rc == 0
 
 
+def test_cli_multi_input_csv_output(tmp_path, capsys):
+    img_a = tmp_path / "a.png"
+    img_b = tmp_path / "b.png"
+    cv2.imwrite(str(img_a), _circle_image(col_c=60, row_c=50, r=18))
+    cv2.imwrite(str(img_b), _circle_image(col_c=45, row_c=35, r=12))
+    out = tmp_path / "batch.csv"
+    rc = cli.main(
+        [
+            "qi",
+            str(img_a),
+            str(img_b),
+            "-o",
+            str(out),
+            "-j",
+            "1",
+            "--seed",
+            "42",
+            "-q",
+        ]
+    )
+    assert rc == 0
+    stdout = capsys.readouterr().out.strip().splitlines()
+    assert len(stdout) == 2
+    assert stdout[0].startswith(str(img_a))
+    lines = out.read_text().strip().splitlines()
+    assert lines[0] == "input,method,x,y,r"
+    assert lines[1].startswith(f"{img_a},qi,")
+    assert lines[2].startswith(f"{img_b},qi,")
+
+
+def test_cli_multi_input_json_output(tmp_path, capsys):
+    img_a = tmp_path / "a.png"
+    img_b = tmp_path / "b.png"
+    cv2.imwrite(str(img_a), _circle_image())
+    cv2.imwrite(str(img_b), _circle_image(col_c=45, row_c=35, r=12))
+    rc = cli.main(["qi", str(img_a), str(img_b), "--json", "-j", "1", "-q"])
+    assert rc == 0
+    import json
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["method"] == "qi"
+    assert [row["input"] for row in payload["results"]] == [str(img_a), str(img_b)]
+
+
+def test_cli_multi_input_compare_json_output(tmp_path, capsys):
+    img_a = tmp_path / "a.png"
+    img_b = tmp_path / "b.png"
+    cv2.imwrite(str(img_a), _circle_image())
+    cv2.imwrite(str(img_b), _circle_image(col_c=45, row_c=35, r=12))
+    rc = cli.main(
+        [
+            "compare",
+            str(img_a),
+            str(img_b),
+            "--methods",
+            "cibica,qi",
+            "--json",
+            "-j",
+            "1",
+            "--seed",
+            "7",
+            "-q",
+        ]
+    )
+    assert rc == 0
+    import json
+
+    rows = json.loads(capsys.readouterr().out)["results"]
+    assert [(row["input"], row["method"]) for row in rows] == [
+        (str(img_a), "cibica"),
+        (str(img_a), "qi"),
+        (str(img_b), "cibica"),
+        (str(img_b), "qi"),
+    ]
+
+
+@pytest.mark.parametrize(("command", "methods"), [("qi", None), ("compare", "qi")])
+def test_cli_multi_input_writes_one_overlay_per_input(
+    tmp_path,
+    capsys,
+    command,
+    methods,
+):
+    img_a = tmp_path / "a.png"
+    img_b = tmp_path / "b.png"
+    cv2.imwrite(str(img_a), _circle_image())
+    cv2.imwrite(str(img_b), _circle_image(col_c=45, row_c=35, r=12))
+    output = tmp_path / "overlay.pdf"
+    arguments = [command, str(img_a), str(img_b)]
+    if methods is not None:
+        arguments.extend(["--methods", methods])
+    arguments.extend(["-o", str(output), "-j", "1", "-q"])
+    assert cli.main(arguments) == 0
+    capsys.readouterr()
+    assert (tmp_path / "overlay_a.pdf").is_file()
+    assert (tmp_path / "overlay_b.pdf").is_file()
+    assert not output.exists()
+
+
 _DATA = Path(__file__).resolve().parents[1] / "data"
 
 
@@ -314,6 +483,7 @@ def test_cli_compare_json_and_raster(tmp_path, capsys):
     import json
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["input"] == str(img)
     assert [r["method"] for r in payload["results"]] == ["qi"]
     assert set("xyr").issubset(payload["results"][0])
     # Raster overlays are written on a 10x nearest-neighbour upscale.

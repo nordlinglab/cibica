@@ -40,9 +40,17 @@ Quick start (command line)::
     cibica qi foot.png -o out.json
 """
 
-from cibica.baselines import HOUGH, qi_2024, rcd, rht
-from cibica.core import CIBICA, LS_circle, median_3d, vectorized_XYR
 from cibica.estimate import IMAGE_ONLY, METHODS, estimate
+from cibica.estimators import (
+    CIBICA,
+    HOUGH,
+    LS_circle,
+    median_3d,
+    qi_2024,
+    rcd,
+    rht,
+    vectorized_XYR,
+)
 from cibica.io import (
     load_edge_points,
     load_image,
@@ -59,7 +67,7 @@ from cibica.preprocessing import (
     preprocess_median_filter,
 )
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 __author__ = "Torbjörn E. M. Nordling"
 __email__ = "t@nordlinglab.org"
 

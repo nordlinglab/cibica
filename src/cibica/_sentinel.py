@@ -1,17 +1,6 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""One way to say "no circle", and one way to ask.
-
-The estimators used three different sentinels: HOUGH returned ``(0, 0, 0)``,
-the baselines ``([-1, -1], -1)``, and CIBICA ``(nan, nan, nan)``. Every caller
-had to know all three, and each was a value the estimator could in principle
-also produce legitimately -- a radius of 0 is degenerate but representable,
-and -1 is a valid coordinate once a centre may sit outside the frame.
-
-NaN cannot collide with a real result, propagates through arithmetic instead
-of silently contributing, and compares false against everything, so an
-accidental ``r > 0`` test rejects it rather than treating it as a circle.
-"""
+"""Canonical no-circle sentinel and predicate."""
 
 from __future__ import annotations
 
@@ -43,8 +32,7 @@ def is_no_circle(radius) -> bool:
         radius: A radius from any estimator.
 
     Returns:
-        bool: True for the NaN sentinel, and also for the legacy ``-1`` and
-        ``0`` values, so callers reading older results stay correct.
+        bool: True for non-finite or nonpositive radii.
     """
     r = float(radius)
     return not np.isfinite(r) or r <= 0.0

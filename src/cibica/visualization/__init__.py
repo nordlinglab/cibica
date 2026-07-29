@@ -32,7 +32,9 @@ from cibica.visualization.pixel_combinations import (
 )
 from cibica.visualization.qualitative import (
     plot_failure_gallery,
+    plot_failure_gallery_result,
     plot_visual_comparison,
+    plot_visual_comparison_result,
 )
 from cibica.visualization.triplet_sweep import (
     plot_jaccard_difference,
@@ -48,5 +50,7 @@ __all__ = [
     "plot_jaccard_difference",
     "run_ablation_study",
     "plot_visual_comparison",
+    "plot_visual_comparison_result",
     "plot_failure_gallery",
+    "plot_failure_gallery_result",
 ]

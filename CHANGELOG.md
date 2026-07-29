@@ -7,44 +7,88 @@ Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-30
+
+### Added
+
+- `estimate()` accepts either one input or a sequence of inputs through the
+  same public function.
+  A single input returns one `(x_col, y_row, r)` triple, while a sequence
+  returns one triple per input in input order.
+  Sequence estimation accepts `n_jobs` and `seed`; every method returns one
+  circle per input, and multi-circle detection within one image is not exposed.
+- The CLI method subcommands and `compare` accept multiple inputs plus
+  `-j`/`--jobs` and `--seed`.
+  Multi-input text, JSON, CSV, and overlay output preserves input order and
+  writes one overlay file per input.
+- `cibica.parallel` provides `performance_cores()`, `pin_compute_threads()`,
+  `task_rng()`, and `map_tasks()` as the shared ordered execution engine for
+  sequence estimation, frame/config sweeps, and triplet sweeps.
+- Every stochastic estimator accepts an explicit NumPy random generator.
+  Task-identity RNG streams make seeded results independent of worker count
+  and task completion order.
+- Shared `Constraints` support matched radius and centre priors for CIBICA,
+  RHT, and RCD, with optional activation reporting and a compute-only
+  constraint-ablation driver covering all five estimators.
+- `cibica.experiments` contains compute-only frame/config, triplet, component
+  ablation, constraint ablation, preprocessing-throughput, edge-count, and
+  qualitative-comparison drivers.
+- `cibica.analysis` adds participant-level aggregation, leave-one-subject-out
+  resampling, Wilcoxon signed-rank statistics, robust effect summaries,
+  labeling-consistency analysis, and circle geometry.
+- Architecture tests inspect static and literal dynamic imports to enforce the
+  dependency DAG between analysis, visualization, estimators, and experiments.
+  The only dynamic exceptions are documented compatibility wrappers for the
+  former visualization-owned study drivers.
+
 ### Changed
 
+- CIBICA samples triplets without materializing all `C(n, 3)` combinations.
+  This removes the previous cubic memory requirement.
+  Stochastic results differ from 1.3.0 because the sampling implementation
+  changed.
+- The frame/config and triplet sweeps use `map_tasks()` and merge results in
+  submission order.
+  `n_jobs=0` selects one worker per detected performance core, and `n_jobs=1`
+  runs in-process.
+- RHT and RCD evaluate candidate circles and inlier counts in vectorized,
+  bounded-memory chunks while preserving candidate order and first-winner tie
+  resolution.
+- Estimator implementations moved from `cibica.core` and `cibica.baselines`
+  to `cibica.estimators`.
+  Compatibility modules and package-level re-exports preserve existing import
+  paths.
+- Study computation now lives in `cibica.experiments`, numerical statistics in
+  `cibica.analysis`, and result-driven plotting in `cibica.visualization`.
+  The three study scripts are thin composition roots with explicit thread
+  pinning.
+- Compute-thread limits are applied only through explicit
+  `pin_compute_threads()` calls and process-pool initialization.
+  OpenCV is pinned directly; BLAS, Accelerate, OpenMP, MKL, and numexpr limits
+  are best effort unless set before their native libraries load.
 - `vectorized_XYR()` centre bound (Filter 2) is off by default
   (`minval=-inf`, `margin=inf`), and `CIBICA()` no longer imposes one.
-  It defaulted to a symmetric ±20 px tolerance through 1.3.0 and briefly to
-  the image rectangle. The bound is inert on the study data: over 144 frames
-  × GL80/82/84 × 3 replicates, lifting it changed no sample, because `rmax`
-  already confines a centre to within `rmax` of one of the triplet's edge
-  points. Pass `minval`/`margin` to reinstate it.
+  Pass `minval` and `margin` to apply a centre prior.
 - `median_3d()` takes the most frequent rounded `(r, x, y)` triple via
-  `np.unique(..., axis=0)`. It previously packed the triple into
-  `r*xmax*ymax + x*ymax + y` and decoded with modulo, which inverts only for
-  `0 <= x < xmax` and `0 <= y < ymax`: a centre outside that box aliased onto
-  a wrong position and corrupted the radius with it (on a 29×33 frame,
-  `(x=-3, y=16, r=11)` decoded as `(26, 16, 10)`), then voted in the mode.
-  That coupled the estimator to Filter 2's bounds; comparing triples directly
-  removes the coupling. Consensus selection stays O(N log N): both the former
-  `scipy.stats.mode` over packed integers and `np.unique` sort their input.
+  `np.unique(..., axis=0)` instead of packing and decoding the values through
+  image dimensions.
+  This removes aliasing for centres outside the image rectangle.
   `xmax`/`ymax` are retained but unused.
-- Every estimator returns the NaN sentinel for "no circle"; `is_no_circle()`
-  is the predicate and still accepts the legacy `-1` and `0` so older result
-  files read correctly.
-- `scripts/run_experiment.py` runs CHT with `minRadius`/`maxRadius` set to
-  CIBICA's `[4, 30]` px window (shared `RMIN`/`RMAX` constants) instead of
-  `[5, 20]`, so neither method carries a tighter size prior than the other.
-- `_estimate_once()` returns a third element, `declined`, and the sweep
-  aggregates per-method `Declined` matrices, separating a fit the estimator
-  refused from one that was confidently wrong.
+- Every estimator uses `(nan, nan, nan)` as the no-circle sentinel.
+  `is_no_circle()` remains compatible with legacy `-1` and `0` radii.
+- The comparison study gives CHT and CIBICA the same `[4, 30]` pixel radius
+  window.
+- Experiment outputs include `Declined` matrices that distinguish a refused
+  fit from a confidently wrong estimate.
 
 ### Fixed
 
 - Filter 1 discards a triplet when `|det| <= collinear_tol` (default
-  `1e-10`, matching RHT, exposed as a parameter). The former exact `det == 0`
-  test admitted triplets collinear to within floating-point rounding, whose
-  near-zero determinant produced an enormous radius caught only by `rmax`.
+  `1e-10`, matching RHT) instead of testing only exact collinearity.
 - Estimator exceptions are reported through `report_degenerate()` before the
-  zero score is returned, so a genuine bug is no longer silent. No score
-  changes.
+  no-circle result is returned.
+- QI rejects divergent or non-finite fits instead of returning meaningless
+  circles.
 
 ## [1.3.0] - 2026-07-12
 

@@ -27,32 +27,13 @@ largest inter-method gap), not a hand-picked list, so a different CIBICA run
 """
 
 import os
-import random
+from importlib import import_module
 
 import cv2
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
-from cibica.baselines.hough import HOUGH
-from cibica.baselines.qi import qi_2024
-from cibica.core import CIBICA
 from cibica.draw import overlay_axes, resolve_overlay_colors
-from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
-from cibica.visualization._common import jaccard_circles
-
-
-def _config(name):
-    cfg = next((c for c in get_preprocessing_configs() if c["name"] == name), None)
-    if cfg is None or cfg["green_level"] is None:
-        raise ValueError(f"{name!r} is not a green-level configuration")
-    return cfg["green_level"]
-
-
-def _estimate_cibica(edgels, xmax, ymax, n_triplets=500):
-    if len(edgels) < 3:
-        return np.nan, np.nan, np.nan
-    return CIBICA(edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax)
 
 
 def _load_frame(data_dir, filename):
@@ -64,110 +45,49 @@ def _load_frame(data_dir, filename):
 
 
 def _score_cibica_vs_hough(data_dir, ground_truth, config_name, seed):
-    """Per-frame Jaccard for CIBICA and CHT/HOUGH at ``config_name``."""
-    green_level = _config(config_name)
-    random.seed(seed)
-    np.random.seed(seed)
-    rows = []
-    for _, gt in ground_truth.iterrows():
-        image = _load_frame(data_dir, gt["Filename"])
-        xmax, ymax = image.shape[1], image.shape[0]
-        _, edge_img, edgels = preprocess_green_level(image, green_level)
-        edge_u8 = (
-            (edge_img * 255).astype(np.uint8)
-            if edge_img.max() <= 1.0
-            else edge_img.astype(np.uint8)
-        )
-        xc, yc, rc = _estimate_cibica(edgels, xmax, ymax)
-        xh, yh, rh = HOUGH(edge_u8, minDist=300, param2=8, minRadius=5, maxRadius=20)
-        jc = (
-            0.0
-            if np.isnan(rc) or rc <= 0
-            else jaccard_circles(gt["X"], gt["Y"], gt["R"], xc, yc, rc)
-        )
-        jh = 0.0 if rh <= 0 else jaccard_circles(gt["X"], gt["Y"], gt["R"], xh, yh, rh)
-        rows.append(
-            {
-                "Filename": gt["Filename"],
-                "x_cibica": xc,
-                "y_cibica": yc,
-                "r_cibica": rc,
-                "j_cibica": jc,
-                "x_cht": xh,
-                "y_cht": yh,
-                "r_cht": rh,
-                "j_cht": jh,
-            }
-        )
-    return pd.DataFrame(rows)
+    """Compatibility wrapper for relocated qualitative computation."""
+    scorer = import_module("cibica.experiments.qualitative").score_cibica_vs_hough
+    return scorer(
+        data_dir,
+        ground_truth,
+        config_name,
+        seed,
+    )[1]
 
 
 def _score_cibica_vs_qi(data_dir, ground_truth, config_name, seed):
-    """Per-frame Jaccard for CIBICA and Qi et al. at ``config_name``."""
-    green_level = _config(config_name)
-    random.seed(seed)
-    np.random.seed(seed)
-    rows = []
-    for _, gt in ground_truth.iterrows():
-        image = _load_frame(data_dir, gt["Filename"])
-        xmax, ymax = image.shape[1], image.shape[0]
-        _, _, edgels = preprocess_green_level(image, green_level)
-        xc, yc, rc = _estimate_cibica(edgels, xmax, ymax)
-        xq = yq = rq = np.nan
-        if len(edgels) >= 3:
-            center, rq = qi_2024(edgels)
-            yq, xq = center[0], center[1]  # qi_2024 returns (row, col)
-        jc = (
-            0.0
-            if np.isnan(rc) or rc <= 0
-            else jaccard_circles(gt["X"], gt["Y"], gt["R"], xc, yc, rc)
-        )
-        jq = (
-            0.0
-            if np.isnan(rq) or rq <= 0
-            else jaccard_circles(gt["X"], gt["Y"], gt["R"], xq, yq, rq)
-        )
-        rows.append(
-            {
-                "Filename": gt["Filename"],
-                "x_cibica": xc,
-                "y_cibica": yc,
-                "r_cibica": rc,
-                "j_cibica": jc,
-                "x_qi": xq,
-                "y_qi": yq,
-                "r_qi": rq,
-                "j_qi": jq,
-            }
-        )
-    return pd.DataFrame(rows)
+    """Compatibility wrapper for relocated qualitative computation."""
+    scorer = import_module("cibica.experiments.qualitative").score_cibica_vs_qi
+    return scorer(
+        data_dir,
+        ground_truth,
+        config_name,
+        seed,
+    )[1]
 
 
-def plot_visual_comparison(
+def plot_visual_comparison_result(
     data_dir,
+    ground_truth,
+    scores,
     output_dir=".",
     date_tag="",
-    config_name="GL80",
-    seed=42,
     colors=None,
     gt_color=None,
     progress=print,
 ):
-    """Paper Fig. 15 --- CIBICA vs CHT on four representative frames.
+    """Plot paper Fig. 15 from precomputed CIBICA and CHT scores.
 
     Cases A-B are the two frames with the largest CIBICA-over-CHT Jaccard
     margin (typical performance); cases C-D are the two frames with the
     lowest CIBICA/CHT average Jaccard among the rest (challenging frames).
 
     Args:
-        data_dir: dataset directory containing ``Ground_Truth.csv`` and
-            ``black_sphere_ROI/``.
+        data_dir: dataset directory containing ``black_sphere_ROI/``.
+        ground_truth: Ground-truth table returned by the experiment driver.
+        scores: Per-frame estimates and scores returned by the driver.
         output_dir: directory for the ``.png``/``.pdf`` outputs.
         date_tag: optional ``YYYYMMDD`` suffix appended to the filename.
-        config_name: green-level configuration (default ``"GL80"``, matching
-            the manuscript).
-        seed: RNG seed for CIBICA's triplet sampling, so frame selection is
-            reproducible.
         colors: optional sequence of two BGR tuples for the (CIBICA, CHT)
             overlays.
         gt_color: optional BGR tuple for the dashed ground-truth circle.
@@ -180,9 +100,6 @@ def plot_visual_comparison(
     Returns:
         The list of written file paths.
     """
-    ground_truth = pd.read_csv(os.path.join(str(data_dir), "Ground_Truth.csv"))
-    scores = _score_cibica_vs_hough(data_dir, ground_truth, config_name, seed)
-
     gap = scores["j_cibica"] - scores["j_cht"]
     typical_idx = gap.sort_values(ascending=False).index[:2].tolist()
     remaining = scores.index.difference(typical_idx)
@@ -234,31 +151,53 @@ def plot_visual_comparison(
     return paths
 
 
-def plot_failure_gallery(
+def plot_visual_comparison(
     data_dir,
     output_dir=".",
     date_tag="",
-    config_name="GL82",
+    config_name="GL80",
     seed=42,
     colors=None,
     gt_color=None,
     progress=print,
 ):
-    """Paper Fig. 16 --- failure-case gallery at GL82 (CIBICA vs Qi et al.).
+    """Compatibility wrapper that computes and plots paper Fig. 15."""
+    ground_truth = pd.read_csv(os.path.join(str(data_dir), "Ground_Truth.csv"))
+    scores = _score_cibica_vs_hough(data_dir, ground_truth, config_name, seed)
+    return plot_visual_comparison_result(
+        data_dir,
+        ground_truth,
+        scores,
+        output_dir=output_dir,
+        date_tag=date_tag,
+        colors=colors,
+        gt_color=gt_color,
+        progress=progress,
+    )
+
+
+def plot_failure_gallery_result(
+    data_dir,
+    ground_truth,
+    scores,
+    output_dir=".",
+    date_tag="",
+    colors=None,
+    gt_color=None,
+    progress=print,
+):
+    """Plot paper Fig. 16 from precomputed CIBICA and Qi scores.
 
     Top row: the four frames with the lowest CIBICA Jaccard score. Bottom
     row: the four frames (excluding the top row) with the largest Qi-over-
     CIBICA Jaccard margin.
 
     Args:
-        data_dir: dataset directory containing ``Ground_Truth.csv`` and
-            ``black_sphere_ROI/``.
+        data_dir: dataset directory containing ``black_sphere_ROI/``.
+        ground_truth: Ground-truth table returned by the experiment driver.
+        scores: Per-frame estimates and scores returned by the driver.
         output_dir: directory for the ``.png``/``.pdf`` outputs.
         date_tag: optional ``YYYYMMDD`` suffix appended to the filename.
-        config_name: green-level configuration (default ``"GL82"``, matching
-            the manuscript).
-        seed: RNG seed for CIBICA's triplet sampling, so frame selection is
-            reproducible.
         colors: optional sequence of two BGR tuples for the (CIBICA, Qi)
             overlays.
         gt_color: optional BGR tuple for the dashed ground-truth circle.
@@ -271,9 +210,6 @@ def plot_failure_gallery(
     Returns:
         The list of written file paths.
     """
-    ground_truth = pd.read_csv(os.path.join(str(data_dir), "Ground_Truth.csv"))
-    scores = _score_cibica_vs_qi(data_dir, ground_truth, config_name, seed)
-
     worst_idx = scores["j_cibica"].sort_values().index[:4].tolist()
     remaining = scores.index.difference(worst_idx)
     gap = scores.loc[remaining, "j_qi"] - scores.loc[remaining, "j_cibica"]
@@ -321,3 +257,28 @@ def plot_failure_gallery(
     plt.close(fig)
     progress(f"  Saved: Fig16_FailureGallery{suffix}.png/pdf  (paper Fig. 16)")
     return paths
+
+
+def plot_failure_gallery(
+    data_dir,
+    output_dir=".",
+    date_tag="",
+    config_name="GL82",
+    seed=42,
+    colors=None,
+    gt_color=None,
+    progress=print,
+):
+    """Compatibility wrapper that computes and plots paper Fig. 16."""
+    ground_truth = pd.read_csv(os.path.join(str(data_dir), "Ground_Truth.csv"))
+    scores = _score_cibica_vs_qi(data_dir, ground_truth, config_name, seed)
+    return plot_failure_gallery_result(
+        data_dir,
+        ground_truth,
+        scores,
+        output_dir=output_dir,
+        date_tag=date_tag,
+        colors=colors,
+        gt_color=gt_color,
+        progress=progress,
+    )

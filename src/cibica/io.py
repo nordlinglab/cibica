@@ -254,3 +254,60 @@ def save_results(
         return path
 
     raise ValueError(f"Unsupported output format {suffix!r}")
+
+
+def save_batch_results(
+    path: str | Path,
+    results: Sequence[tuple[str, str, tuple[float, float, float]]],
+) -> Path:
+    """Save circles for multiple inputs to a tabular data file.
+
+    Args:
+        path: Output path. ``.json`` writes a JSON object with a ``results``
+            list; ``.csv``/``.txt`` writes one ``input,method,x,y,r`` row per
+            result.
+        results: ``(source, method, (x_col, y_row, r))`` rows.
+
+    Returns:
+        The written path.
+
+    Raises:
+        ValueError: For overlay extensions or unsupported output formats.
+    """
+    path = Path(path)
+    suffix = path.suffix.lower()
+    rows = [
+        (str(source), method, float(circle[0]), float(circle[1]), float(circle[2]))
+        for source, method, circle in results
+    ]
+
+    if suffix == ".json":
+        import json
+
+        path.write_text(
+            json.dumps(
+                {
+                    "results": [
+                        {"input": source, "method": method, "x": x, "y": y, "r": r}
+                        for source, method, x, y, r in rows
+                    ],
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+        return path
+
+    if suffix in {".csv", ".txt"}:
+        import csv
+
+        with path.open("w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(("input", "method", "x", "y", "r"))
+            writer.writerows(rows)
+        return path
+
+    raise ValueError(
+        "Batch output requires .json, .csv, or .txt. Overlay outputs are "
+        "written one input at a time."
+    )

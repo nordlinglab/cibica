@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unified "estimate a circle from this input" API.
 
-A single entry point, :func:`estimate`, runs any of the five circle
-estimators on either a raster image or a set of edge points and returns the
-result in one consistent coordinate convention ``(x_col, y_row, r)``.
+A single entry point, :func:`estimate`, runs any of the five circle estimators
+on one raster image, one set of edge points, or a sequence of inputs, and
+returns the result in one consistent coordinate convention ``(x_col, y_row,
+r)``.
 
 All four edge-point methods (``cibica``, ``rht``, ``rcd``, ``qi``) accept an
 image (preprocessed to edge points via
@@ -15,13 +16,23 @@ image itself and cannot run on a bare point set.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, overload
 
 import numpy as np
+from scipy.spatial.distance import cdist
 
-from cibica.baselines import HOUGH, qi_2024, rcd, rht
-from cibica.core import CIBICA
+from cibica.estimators import (
+    CIBICA,
+    HOUGH,
+    LS_circle,
+    qi_2024,
+    rcd,
+    rht,
+    sample_triplets,
+    vectorized_XYR,
+)
 from cibica.io import load_input
 from cibica.preprocessing import image_to_edge_points
 
@@ -35,6 +46,8 @@ METHODS = ("cibica", "hough", "rht", "rcd", "qi")
 IMAGE_ONLY = ("hough",)
 
 _NAN = (float("nan"), float("nan"), float("nan"))
+_STOCHASTIC_METHODS = frozenset({"cibica", "rht", "rcd"})
+Circle = tuple[float, float, float]
 
 
 def _as_kind(data: np.ndarray) -> tuple[str, np.ndarray]:
@@ -56,6 +69,30 @@ def _resolve_input(data) -> tuple[str, np.ndarray]:
     return _as_kind(data)
 
 
+def _is_batch_input(data: Any) -> bool:
+    """Return whether ``data`` is a sequence of inputs, not one point/image array."""
+    if isinstance(data, (str, Path, np.ndarray)):
+        return False
+    if isinstance(data, Sequence):
+        if len(data) == 0:
+            return True
+        if all(isinstance(item, (str, Path, np.ndarray)) for item in data):
+            return True
+    try:
+        arr = np.asarray(data)
+    except ValueError:
+        return True
+    if arr.ndim == 0:
+        return False
+    if arr.ndim == 1 and arr.dtype.kind in {"U", "S", "O"}:
+        return True
+    if arr.ndim == 2:
+        return arr.shape[1] != 2 and arr.dtype.kind in {"U", "S", "O"}
+    if arr.ndim == 3:
+        return bool(arr.shape[-1] == 2)
+    return True
+
+
 def _normalize_rowcol(center, radius) -> tuple[float, float, float]:
     """Unpack an estimator returning ``([x_col, y_row], r)`` to ``(x, y, r)``.
 
@@ -67,7 +104,7 @@ def _normalize_rowcol(center, radius) -> tuple[float, float, float]:
     return float(center[0]), float(center[1]), float(radius)
 
 
-def estimate(
+def _estimate_one(
     data,
     method: str = "cibica",
     *,
@@ -75,28 +112,7 @@ def estimate(
     green_ref=None,
     **kwargs,
 ) -> tuple[float, float, float]:
-    """Estimate a single circle from an image or edge points.
-
-    Args:
-        data: An input path (image or edge-point file) or an in-memory array
-            (BGR/grayscale image, or ``(N, 2)`` ``[[row, col], ...]`` points).
-        method: One of :data:`METHODS`.
-        preprocess: Image-to-edge-points strategy for the edge-point methods
-            when ``data`` is an image (``"canny"``, ``"green_level"`` or
-            ``"median_filter"``); ignored when ``data`` is already edge points
-            or when ``method="hough"``.
-        green_ref: Green background reference image, required when
-            ``preprocess="median_filter"``.
-        **kwargs: Method-specific parameters forwarded to the underlying
-            estimator (e.g. ``n_triplets`` for CIBICA, ``param2`` for HOUGH).
-
-    Returns:
-        The estimated circle as ``(x_col, y_row, r)``; ``(nan, nan, nan)`` if no
-        circle is found.
-
-    Raises:
-        ValueError: For an unknown ``method`` or edge-point input to ``hough``.
-    """
+    """Estimate one circle from one image or edge-point set."""
     method = method.lower()
     if method not in METHODS:
         raise ValueError(f"Unknown method {method!r}; choose from {METHODS}")
@@ -142,3 +158,140 @@ def estimate(
         return _normalize_rowcol(*qi_2024(edgels, **kwargs))
 
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _estimate_cibica_no_consensus(
+    coordinates: np.ndarray,
+    *,
+    n_triplets: int = 500,
+    xmax: int = 50,
+    ymax: int = 50,
+    rng=None,
+) -> Circle:
+    """Estimate CIBICA with per-axis median consensus for ablation studies."""
+    if len(coordinates) < 3:
+        return _NAN
+
+    triplets = sample_triplets(len(coordinates), n_triplets, rng)
+    first, second, third = (
+        coordinates[triplets[:, 0]],
+        coordinates[triplets[:, 1]],
+        coordinates[triplets[:, 2]],
+    )
+    center_x, center_y, radii = vectorized_XYR(
+        first,
+        second,
+        third,
+        xmax,
+        ymax,
+    )
+    if len(center_x) == 0:
+        return _NAN
+
+    x_median = float(np.median(center_x))
+    y_median = float(np.median(center_y))
+    radius_median = float(np.median(radii))
+    near = np.where(
+        np.abs(cdist([(x_median, y_median)], coordinates) - radius_median) < 1.5
+    )
+    points = coordinates[near[1]]
+    if len(points) >= 3:
+        x_fit, y_fit, radius_fit, _ = np.round(
+            LS_circle(points[:, 0], points[:, 1]),
+            3,
+        )
+        return float(y_fit), float(x_fit), float(radius_fit)
+    return y_median, x_median, radius_median
+
+
+@overload
+def estimate(
+    data: str | Path | np.ndarray,
+    method: str = "cibica",
+    *,
+    n_jobs: int = 0,
+    seed: int | None = None,
+    preprocess: str = "canny",
+    green_ref=None,
+    **kwargs,
+) -> Circle: ...
+
+
+@overload
+def estimate(
+    data: Sequence[str | Path | np.ndarray],
+    method: str = "cibica",
+    *,
+    n_jobs: int = 0,
+    seed: int | None = None,
+    preprocess: str = "canny",
+    green_ref=None,
+    **kwargs,
+) -> list[Circle]: ...
+
+
+def estimate(
+    data,
+    method: str = "cibica",
+    *,
+    n_jobs: int = 0,
+    seed: int | None = None,
+    preprocess: str = "canny",
+    green_ref=None,
+    **kwargs,
+) -> tuple[float, float, float] | list[tuple[float, float, float]]:
+    """Estimate one circle per input.
+
+    Args:
+        data: One input path/image/edge-point array, or a sequence of such
+            inputs. Edge-point arrays are ``(N, 2)`` ``[[row, col], ...]``.
+        method: One of :data:`METHODS`.
+        n_jobs: Worker processes for sequence input. ``0`` uses one worker per
+            performance core; ``1`` runs in-process.
+        seed: Optional base seed. For stochastic methods, each input derives
+            its own generator from ``(seed, input_index, method)``, so sequence
+            results are independent of ``n_jobs``.
+        preprocess: Image-to-edge-points strategy for the edge-point methods
+            when an input is an image (``"canny"``, ``"green_level"`` or
+            ``"median_filter"``); ignored for edge-point input and for
+            ``method="hough"``.
+        green_ref: Green background reference image, required when
+            ``preprocess="median_filter"``.
+        **kwargs: Method-specific parameters forwarded to the underlying
+            estimator (e.g. ``n_triplets`` for CIBICA, ``param2`` for HOUGH).
+
+    Returns:
+        A single ``(x_col, y_row, r)`` for one input, or a list of those triples
+        for a sequence. A failed fit is ``(nan, nan, nan)``.
+
+    Raises:
+        ValueError: For an unknown ``method`` or edge-point input to ``hough``.
+    """
+    method = method.lower()
+    if method not in METHODS:
+        raise ValueError(f"Unknown method {method!r}; choose from {METHODS}")
+
+    if _is_batch_input(data):
+        from cibica.batch import _estimate_many
+
+        return _estimate_many(
+            list(data),
+            method=method,
+            n_jobs=n_jobs,
+            seed=seed,
+            preprocess=preprocess,
+            green_ref=green_ref,
+            **kwargs,
+        )
+
+    if seed is not None and method in _STOCHASTIC_METHODS:
+        from cibica.parallel import task_rng
+
+        kwargs.setdefault("rng", task_rng(seed, 0, method))
+    return _estimate_one(
+        data,
+        method=method,
+        preprocess=preprocess,
+        green_ref=green_ref,
+        **kwargs,
+    )
