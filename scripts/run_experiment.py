@@ -21,6 +21,11 @@ Usage (from a clone, with the uv-managed environment):
     uv run python scripts/run_experiment.py
 """
 
+# ruff: noqa: E402
+# E402 is suppressed file-wide: the thread-limit block below has to run before
+# cv2 and NumPy are imported, which necessarily puts statements between the
+# stdlib imports and the third-party ones.
+
 import argparse
 import math
 import os
@@ -30,8 +35,31 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import date
 
+# Accelerate (NumPy's BLAS on macOS) and OpenMP read their thread limits when
+# the library loads, so these must be set BEFORE cv2/NumPy are imported --
+# setting them later, e.g. inside main(), is silently a no-op for this process.
+# One compute thread per process is what makes the core count predictable:
+# --n-jobs N then uses exactly N cores, with no N^2 thread oversubscription in
+# the parallel path and genuinely one core under --n-jobs 1. An explicit value
+# already in the environment still wins.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
 import cv2
 import matplotlib
+
+# OpenCV keeps its own pool and ignores the variables above entirely, but
+# unlike them it can be pinned after import. Without this the preprocessing
+# calls stay free to fan out over every core.
+#
+# The argument must be 0, not 1: 0 is OpenCV's documented "disable threading
+# optimizations and run all functions sequentially". On this build (Apple GCD
+# backend) setNumThreads(1) is silently a no-op -- getNumThreads() keeps
+# reporting one per core -- whereas setNumThreads(0) drops it to 1.
+cv2.setNumThreads(0)
 
 matplotlib.use("Agg")
 from pathlib import Path
@@ -1504,17 +1532,9 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
 
     if n_jobs <= 0:
         n_jobs = performance_cores()
-    # Each worker gets one BLAS thread: N processes each spawning N threads
-    # would oversubscribe the cores and thrash cache. Set before the pool is
-    # created so spawned children inherit it and import NumPy accordingly.
-    for _var in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-    ):
-        os.environ.setdefault(_var, "1")
+    # Compute threads are pinned at module import, which is the only point
+    # early enough for Accelerate and OpenMP to observe it; spawned workers
+    # re-import this module and are pinned the same way.
 
     print("=" * 70)
     print("CIBICA vs Baselines — Circle Detection (2026 revision)")
@@ -1679,7 +1699,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
     print("Fig. 17, Table 7) needs repeated CIBICA runs per frame:")
     print("  uv run python scripts/run_experiment.py --full --replicates 100 --seed 42")
     print("(--replicates also averages the main 5-method experiment. The sweep runs")
-    print(" one worker per performance core; pass --n-jobs 1 to force sequential.)")
+    print(" one worker per performance core, each pinned to a single compute")
+    print(" thread; --n-jobs 1 runs it sequentially on one core.)")
     print("NOT reproduced (reported in the paper):")
     print("  Table 2 parameters, and the permutation, BCa, and beta-regression")
     print("  analyses. Figs. 15/16 are reproduced but frame selection is a")
@@ -1736,8 +1757,10 @@ if __name__ == "__main__":
         metavar="N",
         help=(
             "worker processes for the frame x config sweep (default: 0 = one "
-            "per performance core; 1 = sequential). Results are identical for "
-            "any value when --seed is given"
+            "per performance core; 1 = sequential, one cell at a time in this "
+            "process). BLAS, OpenMP and OpenCV are pinned to one thread per "
+            "process, so N is the number of cores used. Results are identical "
+            "for any value when --seed is given"
         ),
     )
     args = parser.parse_args()
