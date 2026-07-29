@@ -25,7 +25,9 @@ import argparse
 import math
 import os
 import random
+import subprocess
 import time
+from concurrent.futures import ProcessPoolExecutor
 from datetime import date
 
 import cv2
@@ -50,6 +52,14 @@ from cibica import (
     qi_2024,
     rcd,
     rht,
+)
+from cibica.analysis import (
+    end_to_end_fps,
+    leave_one_subject_out,
+    per_subject_statistics,
+    preprocessing_throughput,
+    subject_ids,
+    wilcoxon_signed_rank,
 )
 from cibica.visualization import (
     plot_failure_gallery,
@@ -108,6 +118,9 @@ METHODS = ["CIBICA", "HOUGH", "RHT", "RCD", "QI"]
 # Methods whose output varies from run to run (random sampling). HOUGH and QI
 # are deterministic, so they are never repeated across replicates.
 STOCHASTIC = {"CIBICA", "RHT", "RCD"}
+# Stable integer per method, used as part of the per-cell RNG spawn key so a
+# method's stream never depends on its position in METHODS at runtime.
+METHOD_ID = {m: k for k, m in enumerate(METHODS)}
 BEST_GL = ["GL80", "GL82", "GL84"]
 
 # Color palette — colorblind-friendly
@@ -200,6 +213,13 @@ def compute_focal_stats(results, focal="CIBICA"):
     """
     Wilcoxon + HL + 95% CI + r_rb for focal method vs each baseline.
     Scores = per-image mean Jaccard over GL80/GL82/GL84.
+
+    Both sidedness conventions are reported. The manuscript declares this test
+    one-sided ("improvement > 0"), so ``p_value``/``Stars`` follow the one-sided
+    fit; ``p_two_sided`` is kept alongside because earlier runs published the
+    two-sided value under the same column name. ``W_plus`` is the statistic the
+    manuscript quotes, and ``r_rb`` is derived from it so its sign matches the
+    direction of the effect.
     """
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
@@ -221,30 +241,36 @@ def compute_focal_stats(results, focal="CIBICA"):
                     CI_lo=0.0,
                     CI_hi=0.0,
                     W_stat=np.nan,
+                    W_plus=np.nan,
                     p_value=np.nan,
+                    p_one_sided=np.nan,
+                    p_two_sided=np.nan,
                     r_rb=np.nan,
                     Stars="ns",
                     n_better=0,
                     n_worse=0,
+                    n_tied=int(diff.size),
                 )
             )
             continue
-        stat, p = wilcoxon(focal_s, other, alternative="two-sided")
+        w = wilcoxon_signed_rank(focal_s, other)
         hl, lo, hi = _hl_estimator_ci(focal_s, other)
-        n = len(diff)
-        r_rb = _rank_biserial(float(stat), n)
         rows.append(
             dict(
                 Baseline=method,
                 HL=round(hl, 4),
                 CI_lo=round(lo, 4),
                 CI_hi=round(hi, 4),
-                W_stat=round(float(stat), 1),
-                p_value=float(p),
-                r_rb=round(r_rb, 3),
-                Stars=_sig_stars(p),
-                n_better=int(np.sum(diff > 0)),
-                n_worse=int(np.sum(diff < 0)),
+                W_stat=round(w["w_statistic"], 1),
+                W_plus=round(w["w_plus"], 1),
+                p_value=w["p_one_sided"],
+                p_one_sided=w["p_one_sided"],
+                p_two_sided=w["p_two_sided"],
+                r_rb=round(w["rank_biserial"], 3),
+                Stars=_sig_stars(w["p_one_sided"]),
+                n_better=w["n_better"],
+                n_worse=w["n_worse"],
+                n_tied=w["n_tied"],
             )
         )
     return rows
@@ -255,19 +281,26 @@ def compute_focal_stats(results, focal="CIBICA"):
 # ============================================================================
 
 
-def _estimate_once(method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT):
+def _estimate_once(
+    method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT, rng=None
+):
     """Run one method once on one frame×config; return (jaccard, elapsed_s).
 
     Returns (0.0, 0.0) when the method's minimum edge-point precondition is not
     met, mirroring the zero-initialisation of the result matrices. Timing is
     measured around the estimator call only (excluding the Jaccard computation).
+
+    ``rng`` is forwarded to the stochastic estimators so a worker process draws
+    from its own stream instead of a process-global one.
     """
     t0 = time.perf_counter()
     try:
         if method == "CIBICA":
             if len(edgels) < 3:
                 return 0.0, 0.0
-            x, y, r = CIBICA(edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax)
+            x, y, r = CIBICA(
+                edgels, n_triplets=n_triplets, xmax=xmax, ymax=ymax, rng=rng
+            )
             elapsed = time.perf_counter() - t0
             if np.isnan(x) or r <= 0:
                 return 0.0, elapsed
@@ -283,7 +316,7 @@ def _estimate_once(method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RG
         if method == "RHT":
             if len(edgels) < 3:
                 return 0.0, 0.0
-            c, r = rht(edgels, num_iterations=1000, threshold=3)
+            c, r = rht(edgels, num_iterations=1000, threshold=3, rng=rng)
             elapsed = time.perf_counter() - t0
             if r <= 0:
                 return 0.0, elapsed
@@ -297,6 +330,7 @@ def _estimate_once(method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RG
                 distance_threshold=2,
                 min_inliers=5,
                 min_distance=5,
+                rng=rng,
             )
             elapsed = time.perf_counter() - t0
             if r <= 0:
@@ -315,7 +349,109 @@ def _estimate_once(method, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RG
     return 0.0, 0.0
 
 
-def run_experiments_with_real_data(n_triplets=500, replicates=1):
+def performance_cores():
+    """Return the number of performance (P) cores, falling back to all cores.
+
+    macOS exposes no CPU-affinity API, so workers cannot be pinned; the
+    scheduler places USER_INITIATED-QoS processes on P-cores preferentially.
+    Sizing the pool to the P-core count therefore keeps every worker on a fast
+    core instead of spilling onto the ~2-3x slower E-cores, where a single
+    straggler would set the wall-clock time.
+    """
+    try:
+        out = subprocess.run(
+            ["sysctl", "-n", "hw.perflevel0.logicalcpu"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if out.returncode == 0 and out.stdout.strip().isdigit():
+            n = int(out.stdout.strip())
+            if n > 0:
+                return n
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.cpu_count() or 1
+
+
+def _cell_rng(seed, i, j, method):
+    """Build the RNG stream for one (image, config, method) cell.
+
+    Keyed on grid position rather than draw order, so every cell gets the same
+    stream regardless of how many workers run or in what order cells complete.
+    A run with ``--n-jobs 1`` and one with ``--n-jobs 16`` therefore produce
+    identical numbers -- a stronger guarantee than the previous global-stream
+    design, which depended implicitly on iteration order.
+    """
+    if seed is None:
+        return np.random.default_rng()
+    return np.random.default_rng(
+        np.random.SeedSequence(entropy=seed, spawn_key=(i, j, METHOD_ID[method]))
+    )
+
+
+def _run_cell(task):
+    """Evaluate every method on one (image, config) cell.
+
+    Executed in a worker process, so it takes only picklable arguments, reads
+    its own image, and returns plain arrays for the parent to merge.
+
+    Args:
+        task: ``(i, j, filename, cfg, seed, n_triplets, replicates,
+            XGT, YGT, RGT)``.
+
+    Returns:
+        tuple: ``(i, j, n_edgels, {method: (jaccards, times)})``, or
+        ``(i, j, None, None)`` when the frame is missing or preprocessing
+        fails -- mirroring the zero-initialised result matrices.
+    """
+    (i, j, filename, cfg, seed, n_triplets, replicates, XGT, YGT, RGT) = task
+
+    BS_crop = cv2.imread(
+        os.path.join(str(_DATA), "black_sphere_ROI", filename + ".png")
+    )
+    G_crop = cv2.imread(os.path.join(str(_DATA), "green_back_ROI", filename + ".png"))
+    if BS_crop is None:
+        return (i, j, None, None)
+
+    xmax = BS_crop.shape[1]
+    ymax = BS_crop.shape[0]
+
+    try:
+        if cfg["green_level"] is not None:
+            _, edge_img, edgels = preprocess_green_level(BS_crop, cfg["green_level"])
+        else:
+            _, edge_img, edgels = preprocess_median_filter(
+                BS_crop, G_crop, cfg["median_size"]
+            )
+    except Exception:
+        return (i, j, None, None)
+
+    # Ensure edge_img is uint8 in [0,255] for HOUGH
+    # (matches reference: edgel_frames*255)
+    edge_u8 = (
+        (edge_img * 255).astype(np.uint8)
+        if edge_img.max() <= 1.0
+        else edge_img.astype(np.uint8)
+    )
+
+    per_method = {}
+    for m in METHODS:
+        reps = replicates if m in STOCHASTIC else 1
+        rng = _cell_rng(seed, i, j, m)
+        js = np.empty(reps)
+        ts = np.empty(reps)
+        for k in range(reps):
+            js[k], ts[k] = _estimate_once(
+                m, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT, rng
+            )
+        per_method[m] = (js, ts)
+
+    return (i, j, len(edgels), per_method)
+
+
+def run_experiments_with_real_data(n_triplets=500, replicates=1, seed=None, n_jobs=1):
     """
     Run all five methods on 144 frames × 18 preprocessing configs.
 
@@ -323,6 +459,10 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
     frame×config and the per-cell mean is stored (with the run-to-run standard
     deviation kept alongside); deterministic methods (HOUGH, QI) are run once.
     With ``replicates=1`` (default) this matches the original single-run study.
+
+    Cells are evaluated across ``n_jobs`` worker processes. Each cell seeds its
+    own RNG from ``seed`` and its grid position, so the results are independent
+    of worker count and completion order.
 
     Coordinate convention:
       GT: X=col (horizontal), Y=row (vertical)
@@ -353,80 +493,83 @@ def run_experiments_with_real_data(n_triplets=500, replicates=1):
     # Per-frame edge-pixel count per config (feeds the paper Fig. 11 histogram).
     edge_counts = np.zeros((n_images, n_configs))
 
+    # One task per (image, config). Per-cell cost varies several-fold with the
+    # edgel count, so this finer granularity load-balances far better across
+    # workers than one task per image would.
+    tasks = [
+        (
+            i,
+            j,
+            filenames[i],
+            configs[j],
+            seed,
+            n_triplets,
+            replicates,
+            float(ground_truth.iloc[i]["X"]),
+            float(ground_truth.iloc[i]["Y"]),
+            float(ground_truth.iloc[i]["R"]),
+        )
+        for i in range(n_images)
+        for j in range(n_configs)
+    ]
+
     print(f"Processing {n_images} images × {n_configs} preprocessing configs")
     print(
         f"Methods: {', '.join(METHODS)}  "
         f"(CIBICA n_triplets={n_triplets}, replicates={replicates})"
     )
+    print(f"Parallelism: {n_jobs} worker process(es) over {len(tasks)} cells")
     print("=" * 70)
     t_start = time.time()
 
-    for i, filename in enumerate(filenames):
-        XGT = ground_truth.iloc[i]["X"]
-        YGT = ground_truth.iloc[i]["Y"]
-        RGT = ground_truth.iloc[i]["R"]
+    def _merge(res):
+        """Fold one worker result into the shared accumulators."""
+        i, j, n_edgels, per_method = res
+        if per_method is None:
+            return
+        edge_counts[i, j] = n_edgels
+        for m, (js, ts) in per_method.items():
+            Jaccard[m][i, j] = js.mean()
+            JaccardReplStd[m][i, j] = js.std() if js.size > 1 else 0.0
+            Time_s[m][i, j] = ts.mean()
+            # Accumulate per-replicate per-config frame sums; deterministic
+            # methods broadcast their single value across all replicate slots.
+            if m in STOCHASTIC:
+                JaccByRepCfg[m][:, j] += js
+                TimeByRepCfg[m][:, j] += ts
+            else:
+                JaccByRepCfg[m][:, j] += js[0]
+                TimeByRepCfg[m][:, j] += ts[0]
 
-        BS_crop = cv2.imread(
-            os.path.join(str(_DATA), "black_sphere_ROI", filename + ".png")
+    step = max(1, len(tasks) // 20)
+
+    def _report(done):
+        if done % step and done != len(tasks):
+            return
+        el = time.time() - t_start
+        eta = (len(tasks) - done) * el / done if done else 0.0
+        print(
+            f"  {done}/{len(tasks)} cells  ({el:.1f}s elapsed, ETA {eta / 60:.1f} min)",
+            flush=True,
         )
-        G_crop = cv2.imread(
-            os.path.join(str(_DATA), "green_back_ROI", filename + ".png")
-        )
-        if BS_crop is None:
-            print(f"  Warning: missing {filename} — skipping")
-            continue
 
-        xmax = BS_crop.shape[1]
-        ymax = BS_crop.shape[0]
-        cv2.cvtColor(BS_crop, cv2.COLOR_BGR2GRAY)
+    if n_jobs <= 1:
+        for done, task in enumerate(tasks, start=1):
+            _merge(_run_cell(task))
+            _report(done)
+    else:
+        # chunksize batches several cells per IPC round trip; results arrive in
+        # submission order, so the accumulator folds are deterministic.
+        with ProcessPoolExecutor(max_workers=n_jobs) as pool:
+            for done, res in enumerate(
+                pool.map(_run_cell, tasks, chunksize=4), start=1
+            ):
+                _merge(res)
+                _report(done)
 
-        for j, cfg in enumerate(configs):
-            try:
-                if cfg["green_level"] is not None:
-                    _, edge_img, edgels = preprocess_green_level(
-                        BS_crop, cfg["green_level"]
-                    )
-                else:
-                    _, edge_img, edgels = preprocess_median_filter(
-                        BS_crop, G_crop, cfg["median_size"]
-                    )
-            except Exception:
-                continue
-
-            edge_counts[i, j] = len(edgels)
-
-            # Ensure edge_img is uint8 in [0,255] for HOUGH
-            # (matches reference: edgel_frames*255)
-            edge_u8 = (
-                (edge_img * 255).astype(np.uint8)
-                if edge_img.max() <= 1.0
-                else edge_img.astype(np.uint8)
-            )
-
-            # Run each method; repeat the stochastic ones `replicates` times and
-            # store the per-cell mean (plus the run-to-run std).
-            for m in METHODS:
-                reps = replicates if m in STOCHASTIC else 1
-                js = np.empty(reps)
-                ts = np.empty(reps)
-                for k in range(reps):
-                    js[k], ts[k] = _estimate_once(
-                        m, edgels, edge_u8, xmax, ymax, n_triplets, XGT, YGT, RGT
-                    )
-                Jaccard[m][i, j] = js.mean()
-                JaccardReplStd[m][i, j] = js.std() if reps > 1 else 0.0
-                Time_s[m][i, j] = ts.mean()
-                # Accumulate per-replicate per-config frame sums; deterministic
-                # methods broadcast their single value across all replicate slots.
-                if m in STOCHASTIC:
-                    JaccByRepCfg[m][:, j] += js
-                    TimeByRepCfg[m][:, j] += ts
-                else:
-                    JaccByRepCfg[m][:, j] += js[0]
-                    TimeByRepCfg[m][:, j] += ts[0]
-
-        if (i + 1) % 20 == 0 or (i + 1) == n_images:
-            print(f"  {i + 1}/{n_images} images  ({time.time() - t_start:.1f}s)")
+    missing = int((edge_counts.sum(axis=1) == 0).sum())
+    if missing:
+        print(f"  Warning: {missing} frame(s) produced no edgels in any config")
 
     print("=" * 70)
     print(f"Done in {time.time() - t_start:.1f}s")
@@ -638,6 +781,97 @@ def save_stats_csvs(results, focal_stats, output_dir="."):
 # the manuscript's tab:subject.
 TABLE5_METHOD_ORDER = ["CIBICA", "QI", "RCD", "RHT", "HOUGH"]
 TABLE5_METHOD_LABELS = {"HOUGH": "CHT"}
+
+
+def save_subject_tables(results, output_dir=".", focal="CIBICA"):
+    """Participant-level summaries the cohort table could not provide.
+
+    Frames are clustered within participants (18 participants x 8 frames), so
+    a cohort split over PD/control cannot show whether one participant carries
+    the result. Writes three CSVs: per-subject means for every method, the
+    per-subject mean of the focal method, and the leave-one-subject-out range
+    of the focal-minus-baseline improvement.
+
+    Returns:
+        dict: The per-method ``per_subject_statistics`` summaries, keyed by
+        method, for reuse by the console summary.
+    """
+    cfg_names = results["config_names"]
+    best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    subjects = subject_ids(results["filenames"])
+    scores = {m: results[f"Jaccard_{m}"][:, best_idx].mean(axis=1) for m in METHODS}
+
+    summaries = {m: per_subject_statistics(scores[m], subjects) for m in METHODS}
+    pd.DataFrame(
+        [
+            {
+                "Method": m,
+                "n_subjects": s["n_subjects"],
+                "n_frames": s["n_frames"],
+                "Mean_of_subject_means": round(s["mean_of_subject_means"], 4),
+                "Std_of_subject_means": round(s["std_of_subject_means"], 4),
+                "Min": round(s["min"], 4),
+                "Max": round(s["max"], 4),
+                "Argmin": s["argmin"],
+                "Argmax": s["argmax"],
+            }
+            for m, s in summaries.items()
+        ]
+    ).set_index("Method").to_csv(
+        os.path.join(output_dir, f"Stats_PerSubject_{DATE}.csv")
+    )
+    print(f"  Saved: Stats_PerSubject_{DATE}.csv")
+
+    pd.DataFrame({m: summaries[m]["subject_means"] for m in METHODS}).rename_axis(
+        "Subject"
+    ).round(4).to_csv(os.path.join(output_dir, f"Stats_SubjectMeans_{DATE}.csv"))
+    print(f"  Saved: Stats_SubjectMeans_{DATE}.csv")
+
+    rows = []
+    for method in METHODS:
+        if method == focal:
+            continue
+        loso = leave_one_subject_out(scores[focal] - scores[method], subjects)
+        rows.append(
+            {
+                "Baseline": method,
+                "Full_sample": round(loso["full_sample"], 4),
+                "LOSO_min": round(loso["min"], 4),
+                "LOSO_max": round(loso["max"], 4),
+                "Argmin_dropped": loso["argmin"],
+                "Argmax_dropped": loso["argmax"],
+                "n_subjects": loso["n_subjects"],
+                "n_frames": loso["n_frames"],
+            }
+        )
+    pd.DataFrame(rows).set_index("Baseline").to_csv(
+        os.path.join(output_dir, f"Stats_LeaveOneSubjectOut_{DATE}.csv")
+    )
+    print(f"  Saved: Stats_LeaveOneSubjectOut_{DATE}.csv  (focal: {focal})")
+    return summaries
+
+
+def save_throughput_table(results, output_dir=".", repeats=3, focal="CIBICA"):
+    """Time the preprocessing stage and derive the end-to-end frame rate.
+
+    The sweep times only the estimator call, so preprocessing latency was never
+    measured. Timing is wall-clock and assumes an otherwise idle machine.
+
+    Returns:
+        dict: The ``preprocessing_throughput`` result merged with the
+        ``end_to_end_fps`` breakdown.
+    """
+    tp = preprocessing_throughput(_DATA, repeats=repeats)
+    cfg_names = results["config_names"]
+    best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    fit_s = float(results[f"Time_{focal}"][:, best_idx].mean())
+    e2e = end_to_end_fps(tp["ms_per_edge_image"], 1.0 / fit_s if fit_s > 0 else 1.0)
+
+    pd.DataFrame([{**tp, **e2e, "fitting_method": focal}]).to_csv(
+        os.path.join(output_dir, f"Stats_Throughput_{DATE}.csv"), index=False
+    )
+    print(f"  Saved: Stats_Throughput_{DATE}.csv")
+    return {**tp, **e2e}
 
 
 def save_cohort_table(results, output_dir="."):
@@ -1188,6 +1422,9 @@ def print_summary(results, replicates=1):
         print("Values below come from a SINGLE run per frame and will differ between")
         print("runs. Use --replicates N (with --seed for reproducibility) to average")
         print("over repeats and quantify the run-to-run spread.")
+    print("With --seed set, every cell draws from a stream keyed on its (frame,")
+    print("config, method) position, so results are pinned and identical for any")
+    print("--n-jobs. Without --seed each run differs and cannot be reproduced.")
 
     print("\n" + "=" * 70)
     print("(i) Average over ALL 18 preprocessing configs")
@@ -1258,12 +1495,27 @@ def print_summary(results, replicates=1):
 # ============================================================================
 
 
-def main(replicates=1, seed=None, full=False, supplementary=False):
+def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
     os.makedirs(FIGURES, exist_ok=True)
     os.makedirs(TABLES, exist_ok=True)
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
+
+    if n_jobs <= 0:
+        n_jobs = performance_cores()
+    # Each worker gets one BLAS thread: N processes each spawning N threads
+    # would oversubscribe the cores and thrash cache. Set before the pool is
+    # created so spawned children inherit it and import NumPy accordingly.
+    for _var in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        os.environ.setdefault(_var, "1")
+
     print("=" * 70)
     print("CIBICA vs Baselines — Circle Detection (2026 revision)")
     print(f"Methods: {', '.join(METHODS)}")
@@ -1273,7 +1525,9 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     )
     print("=" * 70)
 
-    results = run_experiments_with_real_data(n_triplets=500, replicates=replicates)
+    results = run_experiments_with_real_data(
+        n_triplets=500, replicates=replicates, seed=seed, n_jobs=n_jobs
+    )
 
     print("\nSaving tables...")
     save_raw_csvs(results, output_dir=TABLES)
@@ -1283,6 +1537,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     focal_stats = compute_focal_stats(results, focal="CIBICA")
     pw_rows = save_stats_csvs(results, focal_stats, output_dir=TABLES)
     save_cohort_table(results, output_dir=TABLES)
+    subject_summaries = save_subject_tables(results, output_dir=TABLES)
+    throughput = save_throughput_table(results, output_dir=TABLES)
 
     print("\nGenerating publication figures...")
     cfg_names = results["config_names"]
@@ -1362,6 +1618,39 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
         print("\nRunning ablation study (paper Table 7)...")
         run_ablation_study(_DATA, table_dir=TABLES, date_tag=DATE)
 
+    cib = subject_summaries["CIBICA"]
+    print("\n" + "=" * 70)
+    print("Participant-level robustness and stage timing")
+    print("=" * 70)
+    print(
+        f"Per-subject mean Jaccard (CIBICA, {BEST_GL[0]}-{BEST_GL[-1]}): "
+        f"{cib['mean_of_subject_means']:.4f} ± {cib['std_of_subject_means']:.4f}"
+    )
+    print(
+        f"  range {cib['min']:.4f} ({cib['argmin']}) – {cib['max']:.4f} "
+        f"({cib['argmax']}) over {cib['n_subjects']} participants, "
+        f"{cib['n_frames']} frames"
+    )
+    for row in focal_stats:
+        if row["Baseline"] in ("HOUGH", "QI") and not np.isnan(row["p_one_sided"]):
+            print(
+                f"  vs {row['Baseline']:<6} HL={row['HL']:+.4f}  W+={row['W_plus']:.0f}"
+                f"  p(1-sided)={row['p_one_sided']:.3g}"
+                f"  p(2-sided)={row['p_two_sided']:.3g}"
+            )
+    print(
+        f"Preprocessing: {throughput['seconds_per_pass']:.2f} s per pass over "
+        f"{throughput['n_edge_images']} edge-images "
+        f"({throughput['edge_images_per_second']:.0f}/s, "
+        f"{throughput['ms_per_edge_image']:.2f} ms each)"
+    )
+    print(
+        f"  end-to-end {throughput['end_to_end_fps']:.0f} fps "
+        f"({throughput['ms_preprocessing']:.2f} ms preprocessing + "
+        f"{throughput['ms_fitting']:.2f} ms fitting)"
+    )
+    print("  (wall-clock; inflated if another job is running)")
+
     print(f"\nFigures saved to: {FIGURES}/")
     print(f"Tables saved to:  {TABLES}/")
     print("\n" + "=" * 70)
@@ -1379,18 +1668,22 @@ def main(replicates=1, seed=None, full=False, supplementary=False):
     print("  Fig15 visual comp   -> Fig. 15 (CIBICA vs CHT, 4 frames at GL80)")
     print("  Fig16 failure gal   -> Fig. 16 (CIBICA vs Qi et al., GL82)")
     print("  Fig17 triplet diff  -> Fig. 17 (Jaccard vs 10k triplets; --full only)")
-    print("  Stats_*             -> in-text Wilcoxon/HL/CI focal + pairwise")
+    print("  Stats_Focal/Pairwise-> in-text Wilcoxon/HL/CI, one- AND two-sided")
+    print("  Stats_PerSubject    -> per-subject mean Jaccard across participants")
+    print("  Stats_SubjectMeans  -> per-participant mean, one row per subject")
+    print("  Stats_LeaveOneSubj* -> leave-one-subject-out improvement interval")
+    print("  Stats_Throughput    -> preprocessing timing + end-to-end frame rate")
     print("  FigS1-FigS6         -> supplementary diagnostics (--supplementary only)")
     print("  (Table 1 + Fig. 7 & 8: run scripts/run_labeling_analysis.py)")
     print("\nComplete reproduction of the heavy artefacts (Table 6 range/CV,")
     print("Fig. 17, Table 7) needs repeated CIBICA runs per frame:")
-    print("  uv run python scripts/run_experiment.py --full --replicates 100")
-    print("(--replicates also averages the main 5-method experiment, so expect a")
-    print(" multi-hour run; add --seed for reproducible stochastic output.)")
+    print("  uv run python scripts/run_experiment.py --full --replicates 100 --seed 42")
+    print("(--replicates also averages the main 5-method experiment. The sweep runs")
+    print(" one worker per performance core; pass --n-jobs 1 to force sequential.)")
     print("NOT reproduced (reported in the paper):")
-    print("  Table 2 parameters, and the leave-one-subject-out, permutation, BCa,")
-    print("  and beta-regression analyses. Figs. 15/16 are reproduced but frame")
-    print("  selection is a ranking, so the exact frames may differ run to run.")
+    print("  Table 2 parameters, and the permutation, BCa, and beta-regression")
+    print("  analyses. Figs. 15/16 are reproduced but frame selection is a")
+    print("  ranking, so the exact frames may differ run to run.")
     print("=" * 70)
 
 
@@ -1436,10 +1729,22 @@ if __name__ == "__main__":
             "panel, Jaccard distance); omitted by default"
         ),
     )
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "worker processes for the frame x config sweep (default: 0 = one "
+            "per performance core; 1 = sequential). Results are identical for "
+            "any value when --seed is given"
+        ),
+    )
     args = parser.parse_args()
     main(
         replicates=args.replicates,
         seed=args.seed,
         full=args.full,
         supplementary=args.supplementary,
+        n_jobs=args.n_jobs,
     )
