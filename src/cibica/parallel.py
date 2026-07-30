@@ -13,9 +13,14 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from numbers import Integral
+
+# A platform that forbids worker processes forbids them for the whole run, so
+# the fallback is announced once rather than before every mapped stage.
+_POOL_UNAVAILABLE_REPORTED = False
 
 
 def performance_cores() -> int:
@@ -80,6 +85,41 @@ def task_rng(seed: int | None, *key: object):
     return np.random.default_rng(np.random.SeedSequence(int(seed), spawn_key=spawn_key))
 
 
+def _run_here(fn, tasks, on_progress):
+    """Run every task in this process, reporting progress in task order."""
+    total = len(tasks)
+    out = []
+    for done, task in enumerate(tasks, start=1):
+        out.append(fn(task))
+        if on_progress is not None:
+            on_progress(done, total)
+    return out
+
+
+def _open_pool(workers):
+    """Return a process pool, or ``None`` where the platform forbids one.
+
+    Restricted sandboxes, hardened hosts, and some CI containers deny the POSIX
+    named semaphores :class:`ProcessPoolExecutor` needs, and refuse at
+    construction before any task runs. Falling back to this process is safe
+    rather than merely convenient: every task derives its RNG from its own
+    position, so the results do not depend on how the work is spread.
+    """
+    global _POOL_UNAVAILABLE_REPORTED
+    try:
+        return ProcessPoolExecutor(max_workers=workers, initializer=pin_compute_threads)
+    except (NotImplementedError, PermissionError, OSError) as exc:
+        if not _POOL_UNAVAILABLE_REPORTED:
+            _POOL_UNAVAILABLE_REPORTED = True
+            print(
+                f"[cibica:parallel] worker processes unavailable ({exc}); "
+                "running in this process instead. Results are unchanged, but "
+                "the run takes longer. Pass n_jobs=1 to select this directly.",
+                file=sys.stderr,
+            )
+        return None
+
+
 def map_tasks[T, R](
     fn: Callable[[T], R],
     tasks: list[T],
@@ -92,7 +132,9 @@ def map_tasks[T, R](
 
     ``n_jobs=0`` selects one worker per performance core and ``n_jobs=1``
     executes in the current process. Worker initialization pins OpenCV and
-    best-effort thread limits for native compute libraries.
+    best-effort thread limits for native compute libraries. Where the platform
+    forbids worker processes the work runs in this process instead, which
+    yields the same results more slowly rather than failing.
     """
     if n_jobs < 0:
         raise ValueError("n_jobs must be 0 or greater")
@@ -104,18 +146,14 @@ def map_tasks[T, R](
 
     workers = performance_cores() if n_jobs == 0 else n_jobs
     if workers <= 1:
-        out = []
-        for done, task in enumerate(tasks, start=1):
-            out.append(fn(task))
-            if on_progress is not None:
-                on_progress(done, total)
-        return out
+        return _run_here(fn, tasks, on_progress)
+
+    pool = _open_pool(workers)
+    if pool is None:
+        return _run_here(fn, tasks, on_progress)
 
     out = []
-    with ProcessPoolExecutor(
-        max_workers=workers,
-        initializer=pin_compute_threads,
-    ) as pool:
+    with pool:
         for done, result in enumerate(
             pool.map(fn, tasks, chunksize=chunksize), start=1
         ):

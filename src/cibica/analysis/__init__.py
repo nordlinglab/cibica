@@ -32,11 +32,21 @@ from cibica.analysis.study_summaries import (
     reference_scores,
 )
 from cibica.analysis.subjects import subject_ids
+from cibica.analysis.timing_statistics import (
+    flag_slow_outliers,
+    format_measurement,
+    modified_z_scores,
+    summarise_repeats,
+)
 from cibica.analysis.wilcoxon_signed_rank import wilcoxon_signed_rank
 
 __all__ = [
     "best_config_stats",
     "compute_focal_stats",
+    "flag_slow_outliers",
+    "format_measurement",
+    "modified_z_scores",
+    "summarise_repeats",
     "end_to_end_fps",
     "jaccard_circles",
     "least_squares_circle",

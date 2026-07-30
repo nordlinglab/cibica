@@ -15,7 +15,7 @@ import math
 import sys
 from typing import cast
 
-from cibica.cli._output import is_data_output, output_for_input
+from cibica.cli._output import describe_inputs, is_data_output, output_for_input
 from cibica.estimate import METHODS, Circle, estimate
 from cibica.io import load_image, save_batch_results, save_results
 
@@ -64,7 +64,7 @@ def run_compare(args: argparse.Namespace) -> int:
 
     if not args.quiet:
         print(
-            f"method=compare({','.join(methods)}) input={','.join(inputs)}",
+            f"method=compare({','.join(methods)}) {describe_inputs(inputs)}",
             file=sys.stderr,
         )
     _print_estimates(args, methods, inputs, circles_by_input, single)

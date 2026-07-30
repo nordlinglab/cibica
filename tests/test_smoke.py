@@ -621,3 +621,48 @@ def test_single_method_overlay_has_no_legend(tmp_path):
     canvas = cv2.imread(str(out))
     h, w = _circle_image().shape[:2]
     assert canvas.shape[:2] == (10 * h, 10 * w)
+
+
+def test_stderr_header_names_a_single_input(tmp_path, capsys):
+    """One input: the header names it, because its stdout line has no path."""
+    img = tmp_path / "frame.png"
+    cv2.imwrite(str(img), _circle_image())
+    assert cli.main(["cibica", str(img), "-j", "1"]) == 0
+    captured = capsys.readouterr()
+    assert f"input={img}" in captured.err
+    # stdout carries the estimate alone, so the header is what identifies it.
+    assert str(img) not in captured.out
+    assert len(captured.out.split()) == 3
+
+
+def test_stderr_header_counts_many_inputs_instead_of_listing_them(tmp_path, capsys):
+    """Several inputs: the header counts them, since stdout already names each.
+
+    Listing them would repeat the whole argument list, which for a glob over a
+    dataset runs to thousands of characters of diagnostics.
+    """
+    images = []
+    for index in range(3):
+        path = tmp_path / f"frame{index}.png"
+        cv2.imwrite(str(path), _circle_image())
+        images.append(path)
+    assert cli.main(["cibica", *[str(p) for p in images], "-j", "1"]) == 0
+    captured = capsys.readouterr()
+    assert "inputs=3" in captured.err
+    for path in images:
+        assert str(path) not in captured.err  # not enumerated as diagnostics
+        assert str(path) in captured.out  # but present on stdout, one per result
+
+
+def test_compare_header_also_counts_many_inputs(tmp_path, capsys):
+    images = []
+    for index in range(2):
+        path = tmp_path / f"frame{index}.png"
+        cv2.imwrite(str(path), _circle_image())
+        images.append(path)
+    arguments = ["compare", *[str(p) for p in images], "-m", "qi", "-j", "1"]
+    assert cli.main(arguments) == 0
+    captured = capsys.readouterr()
+    assert "method=compare(qi) inputs=2" in captured.err
+    for path in images:
+        assert str(path) not in captured.err

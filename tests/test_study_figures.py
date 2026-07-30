@@ -208,6 +208,35 @@ def test_robustness_report_quotes_both_stages(sweep_results, focal_stats, capsys
     assert "vs HOUGH" in out and "vs QI" in out
 
 
+def test_paper_mapping_separates_the_speed_figures_from_this_run(capsys):
+    """The sweep's FPS column is not the paper's, and the output must say so.
+
+    A reader who took Table3_BestConfig's FPS column at face value would quote
+    a number 20-70% below the paper's, because that column times the sweep
+    under 16-way contention rather than one core.
+    """
+    report.print_paper_mapping("figs", "tabs")
+    out = capsys.readouterr().out
+    assert "does NOT produce the paper's speed figures" in out
+    assert "run_timing_repeats.py --repeats 13" in out
+    # Both tables whose fps column is superseded are named.
+    assert "Table3_BestConfig   -> Table 3 accuracy columns only" in out
+    assert "Table6_TripletSweep -> Table 6 mean range & mean CV only" in out
+    # And the reader is told accuracy is unaffected by the worker count.
+    assert "worker-count invariant" in out
+
+
+def test_paper_mapping_ends_with_the_commands_that_reproduce_every_table(capsys):
+    report.print_paper_mapping("figs", "tabs")
+    tail = capsys.readouterr().out.rsplit("reproduce every table", 1)[-1]
+    for command in (
+        "run_experiment.py --full --replicates 100 --seed 42",
+        "run_timing_repeats.py --repeats 13",
+        "run_labeling_analysis.py --compare-passes",
+    ):
+        assert command in tail, command
+
+
 def test_paper_mapping_lists_every_numbered_artefact(capsys):
     report.print_paper_mapping("figs", "tabs")
     out = capsys.readouterr().out

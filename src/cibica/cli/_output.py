@@ -21,6 +21,19 @@ def is_data_output(path: str) -> bool:
     return Path(path).suffix.lower() in DATA_SUFFIXES
 
 
+def describe_inputs(inputs: list[str]) -> str:
+    """Name the inputs for the stderr header, without repeating stdout.
+
+    One input is named, because its stdout line carries only ``x y r``. Several
+    are counted instead: every stdout line already begins with its own path, so
+    listing them again would repeat the whole argument list, which for a glob
+    over a dataset runs to thousands of characters of diagnostics.
+    """
+    if len(inputs) == 1:
+        return f"input={inputs[0]}"
+    return f"inputs={len(inputs)}"
+
+
 def output_for_input(output: str, source: str, index: int) -> Path:
     """Derive one overlay output path for one multi-input source.
 

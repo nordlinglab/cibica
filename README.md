@@ -1,14 +1,14 @@
 ---
 title: "cibica"
 author: "Esteban Román Catafau and Torbjörn E. M. Nordling"
-date: "2026-07-12"
+date: "2026-07-30"
 license: "Apache-2.0"
 purpose: "Gradient-free combinatorial circle estimation for motion-blurred clinical video, with four baseline methods and a CLI."
 ---
 
 # cibica
 
-**Robust gradient-free circle estimation for motion-blurred clinical video.**
+**Circle Identification in Blurry Images using a Combinatorial Approach.**
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20790415.svg)](https://doi.org/10.5281/zenodo.20790415)
 
@@ -16,12 +16,12 @@ purpose: "Gradient-free combinatorial circle estimation for motion-blurred clini
 by sampling edge-point triplets,
 computing geometrically valid circle hypotheses,
 removing unstable candidates (determinant, position, radius constraints),
-selecting the most frequently recurring jointly-encoded centre–radius hypothesis (a frequency-weighted consensus),
-and refining it by least squares on the inliers.
+selecting the most frequently recurring jointly-encoded centre–radius hypothesis (a frequency-based consensus),
+and refining it by least squares on the consensus inliers.
 It is interpretable, training-free, gradient-free, and runs in real time on CPU.
 
 This repository accompanies the manuscript *"Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video"* (The Visual Computer).
-It provides the proposed method, four baselines by their original inventors, the 18 preprocessing configurations, a command-line interface, and a **144-frame clinical example dataset** with ground-truth annotations.
+It provides the proposed method, four baseline methods, the 18 preprocessing configurations, a command-line interface, and a **144-frame clinical example dataset** with ground-truth annotations.
 
 ## Methods
 
@@ -31,9 +31,9 @@ Five circle estimators are provided — the proposed CIBICA method and four base
 |--------|-------------|-----------|
 | **CIBICA** | proposed gradient-free combinatorial estimator | Román Catafau & Nordling (2023), [doi:10.2139/ssrn.4542991](https://doi.org/10.2139/ssrn.4542991) |
 | **HOUGH** | Circle Hough Transform (OpenCV gradient method) | Duda & Hart (1972), [doi:10.1145/361237.361242](https://doi.org/10.1145/361237.361242) |
-| **RHT** | Randomized Hough Transform | Xu, Oja & Kultanen (1990), [doi:10.1016/0167-8655(90)90042-Z](https://doi.org/10.1016/0167-8655(90)90042-Z) |
-| **RCD** | Randomized Circle Detection | Chen & Chung (2001), [doi:10.1006/cviu.2001.0923](https://doi.org/10.1006/cviu.2001.0923) |
-| **QI** | robust algebraic (IRLS) fitting | Qi et al. (2024), [doi:10.1016/j.nima.2024.169775](https://doi.org/10.1016/j.nima.2024.169775) |
+| **RHT** | Randomized Hough Transform (vectorized) | Xu, Oja & Kultanen (1990), [doi:10.1016/0167-8655(90)90042-Z](https://doi.org/10.1016/0167-8655(90)90042-Z) |
+| **RCD** | Randomized Circle Detection (vectorized) | Chen & Chung (2001), [doi:10.1006/cviu.2001.0923](https://doi.org/10.1006/cviu.2001.0923) |
+| **QI** | robust algebraic fitting | Qi et al. (2024), [doi:10.1016/j.nima.2024.169775](https://doi.org/10.1016/j.nima.2024.169775) |
 
 Every method accepts an image;
 all except HOUGH (which is image-only) also accept edge points directly.
@@ -79,6 +79,22 @@ cibica compare image.jpg -m cibica,qi -o fig   # overlay + colour legend in fig.
 
 Each prints the circle to stdout as `x y r` (column centre, row centre, radius, in pixels);
 `compare` prints one `method x y r` line per method.
+
+A stored series can also be redrawn as a figure, which changes how a published
+figure looks without re-running the analysis behind it:
+
+```bash
+cibica histogram jaccards.csv -o Fig8.pdf          # paper Fig. 8
+cibica histogram jaccards.npy -o fig.png --title "Labeling consistency"
+```
+
+The input is a `.csv`, `.txt`, `.json`, or `.npy` file holding one series of
+numbers; `--column NAME` picks one when the file holds several.
+`--title`, `--xlabel`, `--ylabel-left`, `--ylabel-right`, `--font-size`,
+`--width`, and `--height` control the presentation, and the defaults reproduce
+the figure as the manuscript prints it: no title, since the caption carries the
+description, and a font size that lands at the body-text size once the figure
+is scaled to one column.
 Add `--json` for machine-readable output.
 Run `cibica --help`, `cibica <method> --help`, or `cibica --version` for command details.
 
@@ -149,7 +165,7 @@ cibica compare frames/*.png --methods cibica,hough -o overlay.pdf
 ```
 
 Data outputs contain one row per input and method.
-For one input, `-o result.json`, `.csv`, or `.txt` writes data; `.pdf`, `.svg`, or a raster-image extension writes an overlay.
+Output is determined by the extension: `-o result.json`, `.csv`, or `.txt` writes data; `.pdf`, `.svg`, or a raster-image extension writes an overlay.
 A path without an extension produces a PDF overlay.
 Edge-point inputs support data output only because an overlay requires a source image.
 For multiple inputs, data output is combined in one file, while overlays use one deterministic filename per input:
@@ -161,47 +177,38 @@ Exit status is `0` for success, `1` when no circle is found, and `2` for invalid
 
 ## Reproducing the study
 
-The study spans two scripts — **run both** to reproduce the full set of paper artefacts:
+Four scripts reproduce the study.
+The first two produce the paper's tables and figures — **run both**;
+the other two cover the constraint ablation and the reported runtimes.
 
 ```bash
 uv venv --python 3.12.11                                         # creates the environment and pins the interpreter
 uv pip install -e . -r requirements.lock                         # cibica + exact pinned dependencies
-uv run python scripts/run_experiment.py                          # method comparison: Tables 3-7, Figs. 11-17
+uv run python scripts/run_experiment.py --full --replicates 100 --seed 42  # method comparison: Tables 3-7, Figs. 11-17
 uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling consistency: Table 1, Figs. 7 & 8
+uv run python scripts/run_constraint_ablation.py                 # geometric-constraint ablation
+uv run python scripts/run_timing_repeats.py                      # the fps columns in Tables 3 and 6
 ```
-
-- `run_experiment.py` runs the five methods on 144 frames x 18 preprocessing
-  configurations, producing paper Tables 3-6 and Figs. 11-16 (the qualitative
-  overlays, Figs. 15 & 16, use the manuscript's caption colours). The
-  supplementary diagnostic figures `FigS1`-`FigS6` (not numbered in the paper)
-  are produced only when `--supplementary` is given.
-- `run_labeling_analysis.py` quantifies the manual ground-truth labeling
-  consistency, producing paper Table 1 and Figs. 7 & 8. The labelling pass is
-  chosen with `--labelling {A,B}` and **defaults to B**
-  (`data/Black_Sphere_Labelling_B.csv`); pass `--labelling A`
-  to analyse `data/Black_Sphere_Labelling_A.csv` instead.
-  Adding **`--compare-passes`** (recommended) additionally reports the
-  **repeat-labeling** disagreement between the two passes — radius, centre
-  distance, and Jaccard index per frame. The two passes were labelled on
-  different crops, so each is placed in original video-frame coordinates first,
-  using the `crop_origin_x`, `crop_origin_y`, and `scale` columns of the
-  labelling CSVs. This is the honest ground-truth uncertainty (mean Jaccard
-  0.9492), as opposed to the single-pass leave-one-out self-consistency of
-  Table 1 (mean 0.9582), which cannot capture disagreement between two labelings
-  of the same frame. Both passes were made by the same annotator, so this is
-  test–retest (intra-annotator) repeatability rather than inter-rater agreement;
-  true inter-annotator reliability can only be lower.
 
 The study-script flags and defaults are:
 
 | Script | Options |
 |--------|---------|
-| `run_experiment.py` | `--replicates N` (`1`), `--seed N` (unseeded), `--full`, `--supplementary`, `--n-jobs N` (`0`), `-o/--output DIR` (`results`; bypasses automatic seeded filename tags). |
+| `run_experiment.py` | `--replicates N` (`1`), `--seed N` (unseeded), `--full`, `--supplementary`, `-j/--jobs N` (`0`), `-o/--output DIR` (`results`; bypasses automatic seeded filename tags). |
 | `run_labeling_analysis.py` | `--labelling {A,B}` (`B`), `--compare-passes`, `-o/--output DIR` (`results`). |
-| `run_constraint_ablation.py` | `--frames N` (all 144), `--replicates N` (`3`), `--seed N` (`42`), `--report-constraints`, `-o/--output FILE` (automatic tag under `results/tables`; explicit path overrides it). |
+| `run_constraint_ablation.py` | `--frames N` (all 144), `--replicates N` (`3`), `--seed N` (`42`), `--report-constraints`, `-j/--jobs N` (`0`), `-o/--output FILE` (automatic tag under `results/tables`; explicit path overrides it). |
+| `run_timing_repeats.py` | `--repeats N` (`13`), `--seed N` (`42`), `--stage {throughput,methods,triplets}` (repeatable; all by default), `--summarise`, `-o/--output DIR` (`results/tables`). |
 
 Positive-count, nonnegative-seed, and nonnegative-worker constraints are checked before a study starts.
 The constraint-ablation output filename must end in `.csv`.
+
+### Method performance
+
+`run_experiment.py` runs the five methods on 144 frames x 18 preprocessing
+configurations, producing paper Tables 3-6 and Figs. 11-16 (the qualitative
+overlays, Figs. 15 & 16, use the manuscript's caption colours). The
+supplementary diagnostic figures `FigS1`-`FigS6` (not numbered in the paper)
+are produced only when `--supplementary` is given.
 
 To also emit the supplementary diagnostic figures (heatmap, best-GL violin,
 focal-test lollipop, FPS bar, summary panel, and Jaccard distance):
@@ -245,8 +252,58 @@ When a fixed seed is used with the default output, the table suffix is
 `Stats_Throughput_MacBookProM4Max_42.csv`.
 Specifying `-o/--output` bypasses this automatic seeded naming.
 Supplementary diagnostics carry an `S` prefix (`FigS1`–`FigS6`) and are written only under `--supplementary`.
-Results were produced on an Apple Mac Studio (M4 Max), single-machine CPU with NumPy;
+Results were produced on an Apple MacBook Pro (M4 Max), single-machine CPU with NumPy;
 the bootstrap uses a fixed seed (42).
+
+### Labelling
+
+`run_labeling_analysis.py` quantifies the manual ground-truth labeling consistency, producing paper Table 1 and Figs. 7 & 8.
+The labelling pass is chosen with `--labelling {A,B}` and **defaults to B** (`data/Black_Sphere_Labelling_B.csv`); pass `--labelling A` to analyse `data/Black_Sphere_Labelling_A.csv` instead.
+Adding **`--compare-passes`** (recommended) additionally reports the **repeat-labeling** disagreement between the two passes — radius, centre distance, and Jaccard index per frame.
+The two passes were labelled on different crops, so each is placed in original video-frame coordinates first, using the `crop_origin_x`, `crop_origin_y`, and `scale` columns of the labelling CSVs.
+This is the honest ground-truth uncertainty (mean Jaccard 0.9492), as opposed to the single-pass leave-one-out self-consistency of Table 1 (mean 0.9582), which cannot capture disagreement between two labelings of the same frame.
+Both passes were made by the same annotator, so this is test–retest (intra-annotator) repeatability rather than inter-rater agreement; true inter-annotator reliability may be lower.
+
+### Constraint ablation
+
+The constraint ablation checks if the limits give any method an unfair advantage.
+E.g. does CIBICA's radius window [4,30] px give it an advantage the baselines lack?
+
+### Runtime measurement
+
+The frames-per-second figures in paper Tables 3 and 6 come from
+`run_timing_repeats.py`, not from the sweep scripts.
+`run_experiment.py` also writes an `FPS` column into
+`Table3_BestConfig_*.csv` and `Table6_TripletSweep_*.csv`, but that column
+times the sweep as it actually ran — one worker per performance core — so it is
+a by-product of the accuracy run and is not the figure the paper reports.
+Accuracy in this study is worker-count invariant, but runtime is not: spreading
+the work over one process per core measures aggregate throughput under
+memory-bandwidth contention rather than the per-frame latency a deployed system
+sees, and reads 20–70 % lower depending on the workload.
+Every timing therefore runs with `n_jobs=1`, on an otherwise idle machine.
+
+```bash
+uv run python scripts/run_timing_repeats.py --repeats 13   # measure and store the repeat matrices
+uv run python scripts/run_timing_repeats.py --summarise    # pool the stored matrices, measuring nothing
+uv run python scripts/run_timing_repeats.py --stage triplets   # one stage only
+```
+
+Because a wall-clock sample says as much about what else the machine was doing
+as about the code, each figure pools repeated measurements and each repeat is
+screened first.
+The rule is one-sided: contention can only make a repeat slower, so a repeat is
+discarded when its median/MAD modified *z*-score falls below −3.5, while an
+unusually fast repeat is kept — a two-sided rule would bias every reported
+runtime upward.
+Runtimes are reported as the fastest repeat and the mean ± standard deviation,
+quoted only to the precision the observed spread supports.
+
+Three repeat matrices are written to `results/tables/`, one row per repeat:
+`Table3_FPS_*` and `Table6_FPS_*` hold the fps columns of paper Tables 3 and
+6, and `Stats_ThroughputRepeats_*` holds the preprocessing rate, which feeds
+the reported end-to-end figure rather than a numbered table.
+
 
 ### Computer label
 
@@ -256,8 +313,6 @@ The values are converted to portable ASCII alphanumerics, the `Apple` vendor
 word is removed, and the remaining chip-name order is preserved.
 On this computer, `MacBook Pro` plus `Apple M4 Max` therefore becomes
 `MacBookProM4Max`.
-This hardware-derived label is stable if the configured hostname changes and
-does not include serial numbers, hardware UUIDs, usernames, or network names.
 If hardware inspection is unavailable, CIBICA falls back to a sanitized
 hostname and finally to the operating-system and machine-architecture names.
 

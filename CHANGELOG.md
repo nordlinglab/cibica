@@ -5,6 +5,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415).
 
+## [2.1.0] - 2026-07-31
+
+### Added
+
+- `cibica.analysis.timing_statistics` pools repeated wall-clock timings and
+  screens them before pooling.
+  The screening rule is one-sided: contention takes cycles and memory bandwidth
+  away from the measured work, so it can only make a repeat slower.
+  A repeat is discarded when its median/MAD modified z-score falls below -3.5,
+  which removes an anomalously slow repeat and keeps an anomalously fast one;
+  a two-sided rule would bias every reported runtime upward.
+  `format_measurement()` renders a mean only to the precision its own spread
+  supports.
+- `cibica histogram` redraws paper Fig. 8 from a stored series of
+  Jaccard coefficients (`.csv`, `.txt`, `.json`, or `.npy`), with `--title`,
+  `--xlabel`, `--ylabel-left`, `--ylabel-right`, `--font-size`, `--width`, and
+  `--height` controlling the presentation, so a figure can be adjusted without
+  re-running the analysis behind it.
+- `scripts/run_timing_repeats.py` measures the study's runtime figures from
+  repeated single-core timings and writes one repeat matrix per stage:
+  `Table3_FPS_*`, `Table6_FPS_*`, and `Stats_ThroughputRepeats_*`.
+  Timing runs with `n_jobs=1` throughout, because spreading the work over one
+  worker per core measures aggregate throughput under memory-bandwidth
+  contention rather than per-frame latency, and reads 20-70% lower.
+  Accuracy is unaffected, since every estimator is worker-count invariant.
+  `--summarise` pools the stored matrices without measuring anything.
+
+### Changed
+
+- The study scripts spell the worker-count option `-j`/`--jobs`, matching the
+  `cibica` command, instead of `--n-jobs`.
+  `--n-jobs` is still accepted so scripts written against 1.4.0 and 2.0.0 keep
+  working, but it is hidden from `--help`, which documents only the shared
+  spelling.
+  The Python parameter stays `n_jobs` throughout.
+- `map_tasks()` falls back to running in the calling process where the platform
+  forbids worker processes, instead of failing with an uncaught
+  `PermissionError`.
+  Restricted sandboxes, hardened hosts, and some CI containers deny the POSIX
+  named semaphores a process pool needs.
+  Results are unaffected, since every task derives its stream from its own
+  position in the grid; the run is only slower, and the fallback is announced
+  once on stderr.
+- Paper Fig. 8 drops its title, which duplicated the caption, and its labels
+  are sized to render at the manuscript's body-text size.
+  Text inside a figure is scaled with the figure, so at `width=\columnwidth`
+  the 10 pt Matplotlib default arrived at 3 pt beside 10.04 pt body text; the
+  base size is now 33 pt.
+  The figure is also 4:3 rather than 3:2, because at that size the rotated
+  right-hand label no longer fits the height a 3:2 figure leaves.
+- The stderr diagnostic header names a single input but counts several
+  (`inputs=8`), because every stdout line of a multi-input run already begins
+  with its own path; enumerating them repeated the whole argument list, which
+  for a glob over the dataset ran to thousands of characters.
+- `scripts/run_experiment.py` states in its closing report that the `FPS`
+  column it writes into `Table3_BestConfig` and `Table6_TripletSweep` times the
+  sweep as it actually ran, one worker per core, and is not the figure the
+  paper reports, and it names the command that produces those figures.
+
 ## [2.0.0] - 2026-07-30
 
 ### Added

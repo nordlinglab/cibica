@@ -15,7 +15,7 @@ import sys
 from typing import cast
 
 from cibica.cli._options import METHOD_KWARGS
-from cibica.cli._output import is_data_output, output_for_input
+from cibica.cli._output import describe_inputs, is_data_output, output_for_input
 from cibica.estimate import Circle, estimate
 from cibica.io import load_image, save_batch_results, save_result
 
@@ -46,7 +46,7 @@ def run_method(args: argparse.Namespace) -> int:
 
     # CLIG (ADR-0252): diagnostics on stderr, machine-readable data on stdout.
     if not args.quiet:
-        print(f"method={args.method} input={','.join(inputs)}", file=sys.stderr)
+        print(f"method={args.method} {describe_inputs(inputs)}", file=sys.stderr)
     _print_estimates(args, inputs, circles, single)
     if args.output:
         _save(args, inputs, circles, single)

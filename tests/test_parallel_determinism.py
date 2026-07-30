@@ -493,3 +493,66 @@ def test_pin_compute_threads_tolerates_a_missing_opencv(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", without_cv2)
     parallel.pin_compute_threads()  # must not raise
     assert parallel.os.environ["OMP_NUM_THREADS"] == "1"
+
+
+def test_map_tasks_falls_back_when_worker_processes_are_forbidden(monkeypatch, capsys):
+    """A platform that denies process pools must slow down, not fail.
+
+    Restricted sandboxes and hardened hosts refuse the POSIX named semaphores
+    ProcessPoolExecutor needs, and refuse at construction. Falling back is
+    sound rather than merely convenient: each task derives its RNG from its own
+    position, so spreading the work differently cannot change the answer.
+    """
+    monkeypatch.setattr(parallel, "_POOL_UNAVAILABLE_REPORTED", False)
+
+    def forbidden(*args, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", forbidden)
+
+    progress = []
+    result = parallel.map_tasks(
+        _identity_task,
+        [3, 1, 2],
+        n_jobs=4,
+        on_progress=lambda done, total: progress.append((done, total)),
+    )
+    assert result == [3, 1, 2]  # same values, same order as the pool would give
+    assert progress == [(1, 3), (2, 3), (3, 3)]
+    assert "worker processes unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", [NotImplementedError, PermissionError, OSError])
+def test_every_documented_refusal_triggers_the_fallback(monkeypatch, failure):
+    monkeypatch.setattr(parallel, "_POOL_UNAVAILABLE_REPORTED", False)
+
+    def forbidden(*args, **kwargs):
+        raise failure("no pools here")
+
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", forbidden)
+    assert parallel.map_tasks(_identity_task, [1, 2], n_jobs=2) == [1, 2]
+
+
+def test_the_fallback_is_announced_once_per_process(monkeypatch, capsys):
+    """One notice, not one per mapped stage: the platform will not change."""
+    monkeypatch.setattr(parallel, "_POOL_UNAVAILABLE_REPORTED", False)
+
+    def forbidden(*args, **kwargs):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", forbidden)
+    for _ in range(3):
+        parallel.map_tasks(_identity_task, [1, 2], n_jobs=2)
+    assert capsys.readouterr().err.count("worker processes unavailable") == 1
+
+
+def test_a_genuine_pool_failure_still_propagates(monkeypatch):
+    """Only the documented refusals are absorbed; real bugs must surface."""
+    monkeypatch.setattr(parallel, "_POOL_UNAVAILABLE_REPORTED", False)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("something else went wrong")
+
+    monkeypatch.setattr(parallel, "ProcessPoolExecutor", broken)
+    with pytest.raises(RuntimeError, match="something else"):
+        parallel.map_tasks(_identity_task, [1, 2], n_jobs=2)

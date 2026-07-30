@@ -91,7 +91,8 @@ if __name__ == "__main__":
         help="report on stderr when a bound changes an estimate",
     )
     parser.add_argument(
-        "--n-jobs",
+        "-j",
+        "--jobs",
         type=nonnegative_int,
         default=0,
         metavar="N",
@@ -99,6 +100,17 @@ if __name__ == "__main__":
             "worker processes over frames (0 = one per performance core; "
             "1 = sequential); the table is identical for any value"
         ),
+    )
+    # Accepted for compatibility with 1.4.0 and 2.0.0, which spelled this
+    # --n-jobs. Hidden from --help so the documented spelling stays symmetric
+    # with the cibica command; default=SUPPRESS so it never overrides -j.
+    parser.add_argument(
+        "--n-jobs",
+        dest="jobs",
+        type=nonnegative_int,
+        default=argparse.SUPPRESS,
+        metavar="N",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-o",
@@ -117,5 +129,5 @@ if __name__ == "__main__":
         seed=arguments.seed,
         report_constraints=arguments.report_constraints,
         output=arguments.output,
-        n_jobs=arguments.n_jobs,
+        n_jobs=arguments.jobs,
     )

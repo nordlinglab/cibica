@@ -42,6 +42,42 @@ def test_study_script_does_not_import_implementation_layers(path):
     ]
 
 
+WORKER_OPTION_SCRIPTS = (
+    ROOT / "scripts" / "run_experiment.py",
+    ROOT / "scripts" / "run_constraint_ablation.py",
+)
+
+
+@pytest.mark.parametrize("path", WORKER_OPTION_SCRIPTS, ids=lambda path: path.name)
+def test_worker_option_accepts_the_pre_2_1_spelling(path):
+    """``--n-jobs`` shipped in 1.4.0 and 2.0.0, so it must keep working.
+
+    It is accepted but hidden, so ``--help`` documents only the ``-j``/``--jobs``
+    spelling shared with the ``cibica`` command.
+    """
+    rendered = subprocess.run(
+        [sys.executable, str(path), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "--jobs" in rendered
+    assert "--n-jobs" not in rendered  # accepted, but not advertised
+
+    # Both spellings reach the same validator, so neither is a dead option.
+    for option in ("--n-jobs", "--jobs"):
+        completed = subprocess.run(
+            [sys.executable, str(path), option, "-1"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 2, option
+        assert "must be zero or greater" in completed.stderr, option
+
+
 @pytest.mark.parametrize("path", SCRIPTS, ids=lambda path: path.name)
 def test_study_script_help_runs(path):
     completed = subprocess.run(
@@ -61,7 +97,7 @@ def test_study_script_help_runs(path):
     ("path", "arguments"),
     [
         (ROOT / "scripts" / "run_experiment.py", ["--replicates", "0"]),
-        (ROOT / "scripts" / "run_experiment.py", ["--n-jobs", "-1"]),
+        (ROOT / "scripts" / "run_experiment.py", ["--jobs", "-1"]),
         (ROOT / "scripts" / "run_constraint_ablation.py", ["--frames", "0"]),
         (
             ROOT / "scripts" / "run_constraint_ablation.py",

@@ -64,7 +64,8 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--n-jobs",
+        "-j",
+        "--jobs",
         type=nonnegative_int,
         default=0,
         metavar="N",
@@ -75,6 +76,17 @@ if __name__ == "__main__":
             "number of cores used. With --seed the results are identical for "
             "any N. The preprocessing timing always runs serially"
         ),
+    )
+    # Accepted for compatibility with 1.4.0 and 2.0.0, which spelled this
+    # --n-jobs. Hidden from --help so the documented spelling stays symmetric
+    # with the cibica command; default=SUPPRESS so it never overrides -j.
+    parser.add_argument(
+        "--n-jobs",
+        dest="jobs",
+        type=nonnegative_int,
+        default=argparse.SUPPRESS,
+        metavar="N",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "-o",
@@ -98,6 +110,6 @@ if __name__ == "__main__":
         seed=arguments.seed,
         full=arguments.full,
         supplementary=arguments.supplementary,
-        n_jobs=arguments.n_jobs,
+        n_jobs=arguments.jobs,
         output=output,
     )

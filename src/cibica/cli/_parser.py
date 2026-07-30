@@ -24,6 +24,13 @@ from cibica._cli_types import (
 )
 from cibica.cli._options import add_common_options
 from cibica.estimate import METHODS
+from cibica.figure_defaults import (
+    JACCARD_DISTRIBUTION_FIGSIZE,
+    JACCARD_DISTRIBUTION_FONT_SIZE,
+    JACCARD_DISTRIBUTION_XLABEL,
+    JACCARD_DISTRIBUTION_YLABEL_LEFT,
+    JACCARD_DISTRIBUTION_YLABEL_RIGHT,
+)
 
 
 def _add_cibica(sub) -> None:
@@ -192,6 +199,90 @@ def _add_compare(sub) -> None:
     )
 
 
+def _add_histogram(sub) -> None:
+    p = sub.add_parser(
+        "histogram",
+        help="redraw a histogram with cumulative percentage from stored data "
+        "(paper Fig. 8)",
+        formatter_class=DefaultsHelpFormatter,
+    )
+    p.add_argument(
+        "input",
+        metavar="FILE",
+        help="series of Jaccard coefficients (.csv/.txt/.json/.npy)",
+    )
+    p.add_argument(
+        "-o",
+        "--output",
+        default="Fig8_JaccardDistribution.pdf",
+        metavar="FILE",
+        help="output figure; the extension selects the format",
+    )
+    p.add_argument(
+        "--column",
+        metavar="NAME",
+        help="column or JSON key to plot when the file holds several series",
+    )
+    p.add_argument(
+        "--title",
+        default=None,
+        metavar="TEXT",
+        help="heading above the axes (default: none, as the manuscript prints it)",
+    )
+    p.add_argument("--xlabel", default=JACCARD_DISTRIBUTION_XLABEL, metavar="TEXT")
+    p.add_argument(
+        "--ylabel-left", default=JACCARD_DISTRIBUTION_YLABEL_LEFT, metavar="TEXT"
+    )
+    p.add_argument(
+        "--ylabel-right", default=JACCARD_DISTRIBUTION_YLABEL_RIGHT, metavar="TEXT"
+    )
+    p.add_argument(
+        "--font-size",
+        type=positive_float,
+        default=JACCARD_DISTRIBUTION_FONT_SIZE,
+        metavar="PT",
+        help=(
+            "base font size; the default renders at the manuscript's body size "
+            "once the figure is scaled to one column"
+        ),
+    )
+    p.add_argument(
+        "--width",
+        type=positive_float,
+        default=JACCARD_DISTRIBUTION_FIGSIZE[0],
+        metavar="IN",
+        help="figure width in inches",
+    )
+    p.add_argument(
+        "--height",
+        type=positive_float,
+        default=JACCARD_DISTRIBUTION_FIGSIZE[1],
+        metavar="IN",
+        help="figure height in inches",
+    )
+    p.add_argument("--bins", type=positive_int, default=30, metavar="N")
+    p.add_argument(
+        "--hough-ref",
+        type=positive_float,
+        default=0.8,
+        metavar="J",
+        help="Hough reference threshold drawn as a vertical guide",
+    )
+    p.add_argument(
+        "--cibica-ref",
+        type=positive_float,
+        default=0.9,
+        metavar="J",
+        help="CIBICA reference threshold drawn as a vertical guide",
+    )
+    p.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="suppress the diagnostic line on stderr",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the complete ``cibica`` parser with all six subcommands."""
     parser = argparse.ArgumentParser(
@@ -214,4 +305,5 @@ def build_parser() -> argparse.ArgumentParser:
     _add_rcd(sub)
     _add_qi(sub)
     _add_compare(sub)
+    _add_histogram(sub)
     return parser

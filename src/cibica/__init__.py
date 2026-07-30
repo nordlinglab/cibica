@@ -67,7 +67,7 @@ from cibica.preprocessing import (
     preprocess_median_filter,
 )
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "Torbjörn E. M. Nordling"
 __email__ = "t@nordlinglab.org"
 

@@ -51,6 +51,7 @@ from cibica.cli._options import validate_args
 from cibica.cli._parser import build_parser
 from cibica.cli.compare import run_compare
 from cibica.cli.estimate_command import run_method
+from cibica.cli.figures import run_histogram
 from cibica.estimate import METHODS
 from cibica.parallel import pin_compute_threads
 
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     pin_compute_threads()
     argv = list(sys.argv[1:] if argv is None else argv)
     # Shorthand: bare 'cibica <input>' (no subcommand) runs the CIBICA method.
-    subcommands = (*METHODS, "compare")
+    subcommands = (*METHODS, "compare", "histogram")
     if argv and argv[0] not in subcommands and not argv[0].startswith("-"):
         argv = ["cibica", *argv]
 
@@ -76,6 +77,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.method is None:
         parser.print_help()
         return 2
+    # The figure subcommands take a data file rather than images, so the
+    # estimator option cross-checks do not apply to them.
+    if args.method == "histogram":
+        return run_histogram(args, parser)
     validate_args(args, parser)
     if args.method == "compare":
         return run_compare(args)
