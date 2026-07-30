@@ -80,7 +80,38 @@ cibica compare image.jpg -m cibica,qi -o fig   # overlay + colour legend in fig.
 Each prints the circle to stdout as `x y r` (column centre, row centre, radius, in pixels);
 `compare` prints one `method x y r` line per method.
 Add `--json` for machine-readable output.
-Run `cibica --help` or `cibica <method> --help` for the per-method options.
+Run `cibica --help`, `cibica <method> --help`, or `cibica --version` for command details.
+
+### Common options
+
+| Option | Meaning |
+|--------|---------|
+| `-o FILE`, `--output FILE` | Also save the result; the extension selects the format. |
+| `--preprocess {canny,green_level,median_filter}` | Image-to-edge conversion for CIBICA, RHT, RCD, and Qi; default: `canny`. |
+| `--green-ref FILE` | Green-background reference required by `--preprocess median_filter`. |
+| `--json` | Print machine-readable JSON instead of plain text. |
+| `-j N`, `--jobs N` | Worker processes for multiple inputs; `0` uses one per performance core and `1` is sequential. |
+| `--seed N` | Nonnegative seed for reproducible stochastic methods. |
+| `-q`, `--quiet` | Suppress diagnostic headers and saved-path messages on stderr. |
+
+### Method options
+
+| Method | Option | Default | Meaning |
+|--------|--------|---------|---------|
+| CIBICA | `--n-triplets N` | `500` | Maximum distinct edge-point triplets sampled. |
+| CIBICA | `--no-refine` | off | Skip least-squares refinement. |
+| CIBICA | `--rmin PX`, `--rmax PX` | `4`, `30` | Accepted circle-radius interval in pixels. |
+| Hough | `--param2 N` | `8` | OpenCV accumulator threshold. |
+| Hough | `--min-dist PX` | `300` | Minimum distance between detected centers. |
+| Hough | `--min-radius PX`, `--max-radius PX` | `5`, `25` | Detected radius interval in pixels. |
+| RHT | `--iterations N`, `--threshold PX` | `1000`, `5` | Maximum triplets and inlier-distance threshold. |
+| RCD | `--iterations N` | `1000` | Number of random four-point samples. |
+| RCD | `--distance-threshold PX`, `--min-inliers N` | `2`, `10` | Inlier-distance threshold and minimum support. |
+| RCD | `--min-distance PX` | adaptive | Sample-point separation; 40% of point-cloud span, capped at 20 px. |
+| Qi | `--max-iterations N` | `500` | Maximum iteratively reweighted least-squares iterations. |
+
+Counts must be positive, jobs and radii cannot be negative, and each minimum radius must not exceed its maximum.
+`compare` uses each selected method's defaults and does not accept method-specific tuning options.
 
 ## Usage — Python
 
@@ -118,7 +149,15 @@ cibica compare frames/*.png --methods cibica,hough -o overlay.pdf
 ```
 
 Data outputs contain one row per input and method.
-Overlay outputs produce one file per input.
+For one input, `-o result.json`, `.csv`, or `.txt` writes data; `.pdf`, `.svg`, or a raster-image extension writes an overlay.
+A path without an extension produces a PDF overlay.
+Edge-point inputs support data output only because an overlay requires a source image.
+For multiple inputs, data output is combined in one file, while overlays use one deterministic filename per input:
+`-o overlay.pdf` produces `overlay_001_INPUTSTEM.pdf`, `overlay_002_INPUTSTEM.pdf`, and so on.
+The numeric index prevents inputs with the same basename from overwriting each other.
+Missing parent directories are created, and relative output paths resolve from the current working directory.
+Unsupported output extensions are rejected as usage errors.
+Exit status is `0` for success, `1` when no circle is found, and `2` for invalid usage.
 
 ## Reproducing the study
 
@@ -153,6 +192,17 @@ uv run python scripts/run_labeling_analysis.py --compare-passes  # labeling cons
   test–retest (intra-annotator) repeatability rather than inter-rater agreement;
   true inter-annotator reliability can only be lower.
 
+The study-script flags and defaults are:
+
+| Script | Options |
+|--------|---------|
+| `run_experiment.py` | `--replicates N` (`1`), `--seed N` (unseeded), `--full`, `--supplementary`, `--n-jobs N` (`0`), `-o/--output DIR` (`results`; bypasses automatic seeded filename tags). |
+| `run_labeling_analysis.py` | `--labelling {A,B}` (`B`), `--compare-passes`, `-o/--output DIR` (`results`). |
+| `run_constraint_ablation.py` | `--frames N` (all 144), `--replicates N` (`3`), `--seed N` (`42`), `--report-constraints`, `-o/--output FILE` (automatic tag under `results/tables`; explicit path overrides it). |
+
+Positive-count, nonnegative-seed, and nonnegative-worker constraints are checked before a study starts.
+The constraint-ablation output filename must end in `.csv`.
+
 To also emit the supplementary diagnostic figures (heatmap, best-GL violin,
 focal-test lollipop, FPS bar, summary panel, and Jaccard distance):
 
@@ -176,14 +226,40 @@ Study computation lives in `cibica.experiments`, numerical statistics in
 `cibica.analysis`, and plotting in `cibica.visualization`.
 The scripts are composition roots that connect those layers and write outputs.
 
-All outputs are written under **`./results/`** (created in the current working directory):
+Use `-o/--output DIR` to choose the output root for both multi-artifact scripts:
+
+```bash
+uv run python scripts/run_experiment.py -o build/reproduction
+uv run python scripts/run_labeling_analysis.py --compare-passes -o build/reproduction
+```
+
+By default, outputs are written under **`./results/`** in the current working directory:
 the CSV tables (`Jaccard_*`, `Table*`, `Summary_*`, `Stats_*`) in `results/tables/`,
 and the figures in `results/figures/`, each as `.png` and `.pdf`.
+The constraint-ablation utility accepts an output file instead:
+`uv run python scripts/run_constraint_ablation.py -o build/constraint-ablation.csv`.
 Figure files are named by their paper number (`Fig7`, `Fig8`, `Fig11`–`Fig17`) without a date;
-tables carry a `_YYYYMMDD` date suffix so runs from different days coexist.
+unseeded tables carry a `_YYYYMMDD` suffix so runs from different days coexist.
+When a fixed seed is used with the default output, the table suffix is
+`_<computer>_<seed>` instead, for example
+`Stats_Throughput_MacBookProM4Max_42.csv`.
+Specifying `-o/--output` bypasses this automatic seeded naming.
 Supplementary diagnostics carry an `S` prefix (`FigS1`–`FigS6`) and are written only under `--supplementary`.
 Results were produced on an Apple Mac Studio (M4 Max), single-machine CPU with NumPy;
 the bootstrap uses a fixed seed (42).
+
+### Computer label
+
+On macOS, the computer label comes from the `Model Name` and `Chip` fields
+reported by `/usr/sbin/system_profiler SPHardwareDataType`.
+The values are converted to portable ASCII alphanumerics, the `Apple` vendor
+word is removed, and the remaining chip-name order is preserved.
+On this computer, `MacBook Pro` plus `Apple M4 Max` therefore becomes
+`MacBookProM4Max`.
+This hardware-derived label is stable if the configured hostname changes and
+does not include serial numbers, hardware UUIDs, usernames, or network names.
+If hardware inspection is unavailable, CIBICA falls back to a sanitized
+hostname and finally to the operating-system and machine-architecture names.
 
 ## Dataset
 

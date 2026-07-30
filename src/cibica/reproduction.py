@@ -106,9 +106,7 @@ plt.rcParams.update(
 # ============================================================================
 
 DATE = date.today().strftime("%Y%m%d")
-OUTPUT = "results"
-FIGURES = os.path.join(OUTPUT, "figures")  # images only (.png/.pdf)
-TABLES = os.path.join(OUTPUT, "tables")  # CSV tables only
+DEFAULT_OUTPUT = "results"
 
 METHODS = ["CIBICA", "HOUGH", "RHT", "RCD", "QI"]
 # Methods whose output varies from run to run (random sampling). HOUGH and QI
@@ -1196,9 +1194,19 @@ def print_summary(results, replicates=1):
 # ============================================================================
 
 
-def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
-    os.makedirs(FIGURES, exist_ok=True)
-    os.makedirs(TABLES, exist_ok=True)
+def main(
+    replicates=1,
+    seed=None,
+    full=False,
+    supplementary=False,
+    n_jobs=0,
+    output=DEFAULT_OUTPUT,
+):
+    output = Path(output)
+    figures = output / "figures"
+    tables = output / "tables"
+    figures.mkdir(parents=True, exist_ok=True)
+    tables.mkdir(parents=True, exist_ok=True)
     if seed is not None:
         random.seed(seed)
         np.random.seed(seed)
@@ -1238,53 +1246,53 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
     )
 
     print("\nSaving tables...")
-    save_raw_csvs(results, output_dir=TABLES)
-    save_summary_tables(results, output_dir=TABLES)
+    save_raw_csvs(results, output_dir=tables)
+    save_summary_tables(results, output_dir=tables)
 
     print("\nRunning statistical analysis...")
     focal_stats = compute_focal_stats(results, focal="CIBICA")
-    pw_rows = save_stats_csvs(results, focal_stats, output_dir=TABLES)
-    save_cohort_table(results, output_dir=TABLES)
-    subject_summaries = save_subject_tables(results, output_dir=TABLES)
-    throughput = save_throughput_table(results, output_dir=TABLES)
+    pw_rows = save_stats_csvs(results, focal_stats, output_dir=tables)
+    save_cohort_table(results, output_dir=tables)
+    subject_summaries = save_subject_tables(results, output_dir=tables)
+    throughput = save_throughput_table(results, output_dir=tables)
 
     print("\nGenerating publication figures...")
     cfg_names = results["config_names"]
     best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
     # Main-text figures (always produced).
-    plot_line_configs(results, output_dir=FIGURES)
+    plot_line_configs(results, output_dir=figures)
     plot_violin(
         results,
         "GL82",
         [cfg_names.index("GL82")] if "GL82" in cfg_names else [0],
-        output_dir=FIGURES,
+        output_dir=figures,
         fig_tag="GL82",
         fig_label="Fig13",
     )
-    plot_pairwise_heatmap(pw_rows, output_dir=FIGURES)
+    plot_pairwise_heatmap(pw_rows, output_dir=figures)
 
     # Supplementary diagnostics (FigS1-FigS6) — only under --supplementary.
     if supplementary:
         print("Generating supplementary figures (FigS1-FigS6)...")
-        plot_heatmap_method_config(results, output_dir=FIGURES)
+        plot_heatmap_method_config(results, output_dir=figures)
         plot_violin(
             results,
             "GL80/GL82/GL84",
             best_idx,
-            output_dir=FIGURES,
+            output_dir=figures,
             fig_tag="BestGL",
             fig_label="FigS2",
         )
-        plot_focal_stats(focal_stats, output_dir=FIGURES)
-        plot_fps(results, output_dir=FIGURES)
-        plot_summary_panel(results, output_dir=FIGURES)
-        plot_jaccard_distance(results, output_dir=FIGURES)
+        plot_focal_stats(focal_stats, output_dir=figures)
+        plot_fps(results, output_dir=figures)
+        plot_summary_panel(results, output_dir=figures)
+        plot_jaccard_distance(results, output_dir=figures)
 
     # Paper Fig. 11 — edge pixels and triplet combinations per frame. Uses GL82:
     # at this reference config the majority of frames have < 100k triplet
     # combinations while a few exceed 1,000,000, matching the manuscript text.
     fig11_idx = cfg_names.index("GL82") if "GL82" in cfg_names else 0
-    plot_pixel_combinations(results["edge_counts"][:, fig11_idx], output_dir=FIGURES)
+    plot_pixel_combinations(results["edge_counts"][:, fig11_idx], output_dir=figures)
 
     # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT at GL80; CIBICA
     # vs Qi et al. failure gallery at GL82). Runs CIBICA + one baseline on all
@@ -1297,7 +1305,7 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
         _DATA,
         hough_truth,
         hough_scores,
-        output_dir=FIGURES,
+        output_dir=figures,
         colors=[(180, 119, 31), (40, 39, 214)],
         gt_color=(60, 200, 60),
     )
@@ -1306,7 +1314,7 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
         _DATA,
         qi_truth,
         qi_scores,
-        output_dir=FIGURES,
+        output_dir=figures,
         colors=[(180, 119, 31), (0, 140, 255)],
         gt_color=(60, 200, 60),
     )
@@ -1324,13 +1332,13 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
         seed=seed,
         n_jobs=n_jobs,
     )
-    triplet_path = Path(TABLES) / f"Table6_TripletSweep_{DATE}.csv"
+    triplet_path = tables / f"Table6_TripletSweep_{DATE}.csv"
     pd.DataFrame(triplet_result.rows).to_csv(triplet_path, index=False)
     if full and sweep_runs > 1:
         plot_jaccard_difference(
             triplet_result.mean_jaccard,
             triplet_result.n_triplets,
-            output_dir=FIGURES,
+            output_dir=figures,
         )
 
     # Paper Table 7 (component ablation) — only under --full (extra CIBICA runs).
@@ -1340,7 +1348,7 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
             _DATA,
             seed=seed,
         )
-        ablation_path = Path(TABLES) / f"Table7_Ablation_{DATE}.csv"
+        ablation_path = tables / f"Table7_Ablation_{DATE}.csv"
         pd.DataFrame(ablation_result.rows).to_csv(ablation_path, index=False)
 
     cib = subject_summaries["CIBICA"]
@@ -1376,8 +1384,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
     )
     print("  (wall-clock; inflated if another job is running)")
 
-    print(f"\nFigures saved to: {FIGURES}/")
-    print(f"Tables saved to:  {TABLES}/")
+    print(f"\nFigures saved to: {figures}/")
+    print(f"Tables saved to:  {tables}/")
     print("\n" + "=" * 70)
     print("Paper mapping")
     print("=" * 70)
@@ -1406,10 +1414,8 @@ def main(replicates=1, seed=None, full=False, supplementary=False, n_jobs=0):
     print("(--replicates also averages the main 5-method experiment. The sweep runs")
     print(" one worker per performance core, each pinned to a single compute")
     print(" thread; --n-jobs 1 runs it sequentially on one core.)")
-    print("NOT reproduced (reported in the paper):")
-    print("  Table 2 parameters, and the permutation, BCa, and beta-regression")
-    print("  analyses. Figs. 15/16 are reproduced but frame selection is a")
-    print("  ranking, so the exact frames may differ run to run.")
+    print("Figs. 15/16 are reproduced but frame selection is a ranking,")
+    print("so the exact frames may differ run to run.")
     print("=" * 70)
 
 
@@ -1468,6 +1474,16 @@ if __name__ == "__main__":
             "for any value when --seed is given"
         ),
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=DEFAULT_OUTPUT,
+        metavar="DIR",
+        help=(
+            "output root directory; tables and figures are written to DIR/tables "
+            "and DIR/figures (default: ./results)"
+        ),
+    )
     args = parser.parse_args()
     main(
         replicates=args.replicates,
@@ -1475,4 +1491,5 @@ if __name__ == "__main__":
         full=args.full,
         supplementary=args.supplementary,
         n_jobs=args.n_jobs,
+        output=args.output,
     )

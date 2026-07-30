@@ -139,6 +139,15 @@ def save_result(
     if not path.suffix:
         path = path.with_suffix(".pdf")
     suffix = path.suffix.lower()
+    if suffix not in {
+        ".json",
+        ".csv",
+        ".txt",
+        *IMAGE_SUFFIXES,
+        *OVERLAY_VECTOR_SUFFIXES,
+    }:
+        raise ValueError(f"Unsupported output format {suffix!r}")
+    path.parent.mkdir(parents=True, exist_ok=True)
     x, y, r = (float(result[0]), float(result[1]), float(result[2]))
 
     if suffix == ".json":
@@ -169,7 +178,7 @@ def save_result(
         save_overlay(path, image, [(x, y, r)], mark_centers=True)
         return path
 
-    raise ValueError(f"Unsupported output format {suffix!r}")
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def save_results(
@@ -210,6 +219,15 @@ def save_results(
     if not path.suffix:
         path = path.with_suffix(".pdf")
     suffix = path.suffix.lower()
+    if suffix not in {
+        ".json",
+        ".csv",
+        ".txt",
+        *IMAGE_SUFFIXES,
+        *OVERLAY_VECTOR_SUFFIXES,
+    }:
+        raise ValueError(f"Unsupported output format {suffix!r}")
+    path.parent.mkdir(parents=True, exist_ok=True)
     rows = [(m, float(c[0]), float(c[1]), float(c[2])) for m, c in results]
 
     if suffix == ".json":
@@ -253,7 +271,7 @@ def save_results(
         )
         return path
 
-    raise ValueError(f"Unsupported output format {suffix!r}")
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def save_batch_results(
@@ -276,6 +294,12 @@ def save_batch_results(
     """
     path = Path(path)
     suffix = path.suffix.lower()
+    if suffix not in {".json", ".csv", ".txt"}:
+        raise ValueError(
+            "Batch output requires .json, .csv, or .txt. Overlay outputs are "
+            "written one input at a time."
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
     rows = [
         (str(source), method, float(circle[0]), float(circle[1]), float(circle[2]))
         for source, method, circle in results
@@ -307,7 +331,4 @@ def save_batch_results(
             writer.writerows(rows)
         return path
 
-    raise ValueError(
-        "Batch output requires .json, .csv, or .txt. Overlay outputs are "
-        "written one input at a time."
-    )
+    raise AssertionError("unreachable")  # pragma: no cover

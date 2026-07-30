@@ -253,6 +253,40 @@ def test_cli_version(capsys):
     assert capsys.readouterr().out.startswith("cibica ")
 
 
+def test_cli_method_help_documents_defaults_and_units(capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["cibica", "--help"])
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "--n-triplets N" in output
+    assert "distinct edge-point triplets" in output
+    assert "--rmin PX" in output
+    assert "(default: 500)" in output
+    assert "(default: 4)" in output
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["cibica", "missing.png", "--n-triplets", "0"],
+        ["cibica", "missing.png", "--rmin", "31", "--rmax", "30"],
+        ["hough", "missing.png", "--min-radius", "26", "--max-radius", "25"],
+        ["rht", "missing.png", "--iterations", "0"],
+        ["rcd", "missing.png", "--min-inliers", "0"],
+        ["qi", "missing.png", "--max-iterations", "0"],
+        ["qi", "missing.png", "--jobs", "-1"],
+        ["cibica", "missing.png", "--seed", "-1"],
+        ["qi", "missing.png", "--preprocess", "median_filter"],
+        ["qi", "missing.png", "--output", "result.unsupported"],
+        ["qi", "missing.csv", "--output", "overlay.pdf"],
+    ],
+)
+def test_cli_rejects_invalid_options(arguments):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(arguments)
+    assert exc.value.code == 2
+
+
 def test_cli_cibica_method_options(tmp_path):
     img = tmp_path / "c.png"
     cv2.imwrite(str(img), _circle_image())
@@ -423,9 +457,33 @@ def test_cli_multi_input_writes_one_overlay_per_input(
     arguments.extend(["-o", str(output), "-j", "1", "-q"])
     assert cli.main(arguments) == 0
     capsys.readouterr()
-    assert (tmp_path / "overlay_a.pdf").is_file()
-    assert (tmp_path / "overlay_b.pdf").is_file()
+    assert (tmp_path / "overlay_001_a.pdf").is_file()
+    assert (tmp_path / "overlay_002_b.pdf").is_file()
     assert not output.exists()
+
+
+@pytest.mark.parametrize(("command", "methods"), [("qi", None), ("compare", "qi")])
+def test_cli_multi_input_overlay_names_survive_duplicate_stems(
+    tmp_path,
+    capsys,
+    command,
+    methods,
+):
+    first = tmp_path / "first" / "frame.png"
+    second = tmp_path / "second" / "frame.png"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    cv2.imwrite(str(first), _circle_image())
+    cv2.imwrite(str(second), _circle_image(col_c=45, row_c=35, r=12))
+    output = tmp_path / "overlay.pdf"
+    arguments = [command, str(first), str(second)]
+    if methods is not None:
+        arguments.extend(["--methods", methods])
+    arguments.extend(["-o", str(output), "-j", "1", "-q"])
+    assert cli.main(arguments) == 0
+    capsys.readouterr()
+    assert (tmp_path / "overlay_001_frame.pdf").is_file()
+    assert (tmp_path / "overlay_002_frame.pdf").is_file()
 
 
 _DATA = Path(__file__).resolve().parents[1] / "data"
@@ -505,6 +563,15 @@ def test_save_results_multi_method_csv(tmp_path):
     lines = out.read_text().strip().splitlines()
     assert lines[0] == "method,x,y,r"
     assert lines[1].startswith("qi,") and lines[2].startswith("hough,")
+
+
+def test_cli_output_creates_parent_directories(tmp_path, capsys):
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    output = tmp_path / "nested" / "results" / "circle.json"
+    assert cli.main(["qi", str(img), "-o", str(output), "-q"]) == 0
+    capsys.readouterr()
+    assert output.is_file()
 
 
 def test_rcd_default_min_distance_adapts_to_small_frames():

@@ -7,6 +7,33 @@ Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415
 
 ## [Unreleased]
 
+### Added
+
+- Every output-producing CLI accepts `-o`/`--output`.
+  The study scripts accept an output root for their `tables/` and `figures/`
+  directories, while the constraint-ablation script accepts an exact CSV path.
+  Generic CLI result writers create missing parent directories.
+- CLI help now documents method-specific defaults, units, accepted ranges,
+  output naming, and study-script options.
+
+### Changed
+
+- Multi-input overlays use indexed names such as
+  `overlay_001_frame.pdf`, preventing duplicate input basenames from
+  overwriting one another.
+- CLI numeric values, radius ordering, preprocessing dependencies, and output
+  extensions are validated before computation starts.
+- Relative study-script outputs consistently resolve from the current working
+  directory.
+- Seeded default study tables use a stable hardware-and-seed suffix such as
+  `_MacBookProM4Max_42`; unseeded tables retain `_YYYYMMDD`, and explicit
+  `-o`/`--output` paths bypass automatic seeded tags.
+
+### Removed
+
+- Undocumented executable test harnesses from the estimator implementation
+  modules; estimator examples and checks remain in docstrings and pytest.
+
 ## [1.4.0] - 2026-07-30
 
 ### Added

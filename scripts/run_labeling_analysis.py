@@ -6,16 +6,20 @@
 import argparse
 from pathlib import Path
 
+from cibica._cli_types import DefaultsHelpFormatter
 from cibica.parallel import pin_compute_threads
 
 LABELLING_PASSES = ("A", "B")
 DEFAULT_LABELLING = "B"
 ROOT = Path(__file__).resolve().parent.parent
-FIGURES = ROOT / "results" / "figures"
-TABLES = ROOT / "results" / "tables"
+DEFAULT_OUTPUT = Path("results")
 
 
-def main(labelling: str = DEFAULT_LABELLING, compare_passes: bool = False) -> None:
+def main(
+    labelling: str = DEFAULT_LABELLING,
+    compare_passes: bool = False,
+    output: str | Path = DEFAULT_OUTPUT,
+) -> None:
     """Compute the labeling statistics and write Table 1 and Figs. 7-8."""
     pin_compute_threads()
 
@@ -27,8 +31,11 @@ def main(labelling: str = DEFAULT_LABELLING, compare_passes: bool = False) -> No
         plot_jaccard_distribution,
     )
 
-    FIGURES.mkdir(parents=True, exist_ok=True)
-    TABLES.mkdir(parents=True, exist_ok=True)
+    output = Path(output)
+    figures = output / "figures"
+    tables = output / "tables"
+    figures.mkdir(parents=True, exist_ok=True)
+    tables.mkdir(parents=True, exist_ok=True)
     jaccards, errors, ratios = labeling.compute_labeling_consistency(labelling)
     repeat = (
         labeling.compute_repeat_labeling_consistency(labelling)
@@ -36,10 +43,10 @@ def main(labelling: str = DEFAULT_LABELLING, compare_passes: bool = False) -> No
         else None
     )
     table = labeling.make_table1(jaccards, repeat)
-    table_path = TABLES / "Table1_LabelingConsistency.csv"
+    table_path = tables / "Table1_LabelingConsistency.csv"
     table.to_csv(table_path, index=False)
-    plot_jaccard_distribution(jaccards, output_dir=FIGURES)
-    plot_error_histogram(errors, ratios, output_dir=FIGURES)
+    plot_jaccard_distribution(jaccards, output_dir=figures)
+    plot_error_histogram(errors, ratios, output_dir=figures)
 
     average_radius, radius_std, relative_std = labeling.compute_radius_statistics(
         labelling
@@ -68,7 +75,8 @@ if __name__ == "__main__":
         description=(
             "Manual-labeling consistency analysis: paper Table 1 and Figs. 7 & 8 "
             "from a chosen labelling pass."
-        )
+        ),
+        formatter_class=DefaultsHelpFormatter,
     )
     parser.add_argument(
         "--labelling",
@@ -77,7 +85,7 @@ if __name__ == "__main__":
         help=(
             "which manual labelling pass to analyse: A "
             "(Black_Sphere_Labelling_A.csv) or B "
-            "(Black_Sphere_Labelling_B.csv); default: B"
+            "(Black_Sphere_Labelling_B.csv)"
         ),
     )
     parser.add_argument(
@@ -88,8 +96,19 @@ if __name__ == "__main__":
             "frame: radius, centre distance, and Jaccard index"
         ),
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=DEFAULT_OUTPUT,
+        metavar="DIR",
+        help=(
+            "output root directory; Table 1 is written to DIR/tables and "
+            "Figs. 7-8 to DIR/figures"
+        ),
+    )
     arguments = parser.parse_args()
     main(
         labelling=arguments.labelling,
         compare_passes=arguments.compare_passes,
+        output=arguments.output,
     )

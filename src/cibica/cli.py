@@ -45,8 +45,23 @@ from pathlib import Path
 from typing import cast
 
 from cibica import __version__
+from cibica._cli_types import (
+    DefaultsHelpFormatter,
+    nonnegative_float,
+    nonnegative_int,
+    positive_float,
+    positive_int,
+)
 from cibica.estimate import METHODS, Circle, estimate
-from cibica.io import load_image, save_batch_results, save_result, save_results
+from cibica.io import (
+    IMAGE_SUFFIXES,
+    OVERLAY_VECTOR_SUFFIXES,
+    POINTS_SUFFIXES,
+    load_image,
+    save_batch_results,
+    save_result,
+    save_results,
+)
 from cibica.parallel import pin_compute_threads
 
 # Translate CLI flags to each estimator's keyword arguments.
@@ -111,8 +126,7 @@ def _add_common(p: argparse.ArgumentParser) -> None:
         "--preprocess",
         choices=["canny", "green_level", "median_filter"],
         default="canny",
-        help="image-to-edge-points strategy (default: canny); "
-        "ignored for hough and for edge-point input",
+        help="image-to-edge-points strategy; ignored for hough and edge-point input",
     )
     p.add_argument(
         "--green-ref",
@@ -127,14 +141,14 @@ def _add_common(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "-j",
         "--jobs",
-        type=int,
+        type=nonnegative_int,
         default=0,
         help="worker processes for multiple inputs (0 = one per performance core, "
         "1 = sequential)",
     )
     p.add_argument(
         "--seed",
-        type=int,
+        type=nonnegative_int,
         help="seed stochastic methods; sequence results are independent of --jobs",
     )
     p.add_argument(
@@ -150,47 +164,161 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="cibica",
         description="Estimate a circle from an image or edge points. "
         "The method is the subcommand; 'cibica <input>' runs CIBICA.",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "examples:\n"
+            "  cibica image.jpg\n"
+            "  cibica qi image.jpg -o result.json\n"
+            "  cibica compare frames/*.png -m cibica,qi -o overlays.pdf"
+        ),
+        formatter_class=DefaultsHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"cibica {__version__}")
     sub = parser.add_subparsers(dest="method", metavar="METHOD")
 
-    p = sub.add_parser("cibica", help="proposed combinatorial estimator")
+    p = sub.add_parser(
+        "cibica",
+        help="proposed combinatorial estimator",
+        formatter_class=DefaultsHelpFormatter,
+    )
     _add_common(p)
-    p.add_argument("--n-triplets", type=int, dest="n_triplets")
+    p.add_argument(
+        "--n-triplets",
+        type=positive_int,
+        default=500,
+        metavar="N",
+        help="maximum number of distinct edge-point triplets to sample",
+    )
     p.add_argument(
         "--no-refine", action="store_true", help="skip least-squares refinement"
     )
-    p.add_argument("--rmin", type=float)
-    p.add_argument("--rmax", type=float)
+    p.add_argument(
+        "--rmin",
+        type=nonnegative_float,
+        default=4,
+        metavar="PX",
+        help="minimum accepted circle radius in pixels",
+    )
+    p.add_argument(
+        "--rmax",
+        type=positive_float,
+        default=30,
+        metavar="PX",
+        help="maximum accepted circle radius in pixels",
+    )
 
-    p = sub.add_parser("hough", help="Circle Hough Transform (Duda & Hart 1972)")
+    p = sub.add_parser(
+        "hough",
+        help="Circle Hough Transform (Duda & Hart 1972)",
+        formatter_class=DefaultsHelpFormatter,
+    )
     _add_common(p)
-    p.add_argument("--param2", type=int)
-    p.add_argument("--min-dist", type=float, dest="min_dist")
-    p.add_argument("--min-radius", type=int, dest="min_radius")
-    p.add_argument("--max-radius", type=int, dest="max_radius")
+    p.add_argument(
+        "--param2",
+        type=positive_int,
+        default=8,
+        metavar="N",
+        help="OpenCV accumulator threshold; lower values admit more circles",
+    )
+    p.add_argument(
+        "--min-dist",
+        type=positive_float,
+        default=300,
+        metavar="PX",
+        help="minimum distance between detected circle centers in pixels",
+    )
+    p.add_argument(
+        "--min-radius",
+        type=nonnegative_int,
+        default=5,
+        metavar="PX",
+        help="minimum detected circle radius in pixels",
+    )
+    p.add_argument(
+        "--max-radius",
+        type=positive_int,
+        default=25,
+        metavar="PX",
+        help="maximum detected circle radius in pixels",
+    )
 
-    p = sub.add_parser("rht", help="Randomized Hough Transform (Xu et al. 1990)")
+    p = sub.add_parser(
+        "rht",
+        help="Randomized Hough Transform (Xu et al. 1990)",
+        formatter_class=DefaultsHelpFormatter,
+    )
     _add_common(p)
-    p.add_argument("--iterations", type=int)
-    p.add_argument("--threshold", type=float)
+    p.add_argument(
+        "--iterations",
+        type=positive_int,
+        default=1000,
+        metavar="N",
+        help="maximum random triplets to evaluate",
+    )
+    p.add_argument(
+        "--threshold",
+        type=positive_float,
+        default=5,
+        metavar="PX",
+        help="maximum point-to-circle distance counted as an inlier",
+    )
 
-    p = sub.add_parser("rcd", help="Randomized Circle Detection (Chen & Chung 2001)")
+    p = sub.add_parser(
+        "rcd",
+        help="Randomized Circle Detection (Chen & Chung 2001)",
+        formatter_class=DefaultsHelpFormatter,
+    )
     _add_common(p)
-    p.add_argument("--iterations", type=int)
-    p.add_argument("--distance-threshold", type=float, dest="distance_threshold")
-    p.add_argument("--min-inliers", type=int, dest="min_inliers")
-    p.add_argument("--min-distance", type=float, dest="min_distance")
+    p.add_argument(
+        "--iterations",
+        type=positive_int,
+        default=1000,
+        metavar="N",
+        help="number of random four-point samples",
+    )
+    p.add_argument(
+        "--distance-threshold",
+        type=positive_float,
+        default=2,
+        metavar="PX",
+        help="maximum point-to-circle distance counted as an inlier",
+    )
+    p.add_argument(
+        "--min-inliers",
+        type=positive_int,
+        default=10,
+        metavar="N",
+        help="minimum supporting edge points required for a circle",
+    )
+    p.add_argument(
+        "--min-distance",
+        type=nonnegative_float,
+        default=None,
+        metavar="PX",
+        help=(
+            "minimum separation between sampled points in pixels; omitted uses "
+            "40%% of the point-cloud span, capped at 20 px"
+        ),
+    )
 
-    p = sub.add_parser("qi", help="robust algebraic fitting (Qi et al. 2024)")
+    p = sub.add_parser(
+        "qi",
+        help="robust algebraic fitting (Qi et al. 2024)",
+        formatter_class=DefaultsHelpFormatter,
+    )
     _add_common(p)
-    p.add_argument("--max-iterations", type=int, dest="max_iterations")
+    p.add_argument(
+        "--max-iterations",
+        type=positive_int,
+        default=500,
+        metavar="N",
+        help="maximum iteratively reweighted least-squares iterations",
+    )
 
     p = sub.add_parser(
         "compare",
         help="run several methods (each with its defaults) and overlay "
         "their circles in one figure",
+        formatter_class=DefaultsHelpFormatter,
     )
     _add_common(p)
     p.add_argument(
@@ -198,7 +326,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--methods",
         metavar="LIST",
         default=",".join(METHODS),
-        help=f"comma-separated methods to run (default: {','.join(METHODS)})",
+        help="comma-separated methods to run",
     )
 
     return parser
@@ -208,12 +336,56 @@ def _is_data_output(path: str) -> bool:
     return Path(path).suffix.lower() in {".json", ".csv", ".txt"}
 
 
-def _output_for_input(output: str, source: str) -> Path:
+def _output_for_input(output: str, source: str, index: int) -> Path:
     """Derive one overlay output path for one multi-input source."""
     base = Path(output)
     suffix = base.suffix or ".pdf"
     stem = base.stem if base.suffix else base.name
-    return base.with_name(f"{stem}_{Path(source).stem}{suffix}")
+    return base.with_name(f"{stem}_{index:03d}_{Path(source).stem}{suffix}")
+
+
+def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Validate option relationships that argparse types cannot express."""
+    if args.output:
+        suffix = Path(args.output).suffix.lower()
+        supported = {
+            ".json",
+            ".csv",
+            ".txt",
+            *IMAGE_SUFFIXES,
+            *OVERLAY_VECTOR_SUFFIXES,
+        }
+        if suffix and suffix not in supported:
+            parser.error(
+                "--output must have no extension or use one of: "
+                + ", ".join(sorted(supported))
+            )
+        if suffix not in {".json", ".csv", ".txt"}:
+            point_inputs = [
+                source
+                for source in args.input
+                if Path(source).suffix.lower() in POINTS_SUFFIXES
+            ]
+            if point_inputs:
+                parser.error(
+                    "overlay output requires image inputs; use .json, .csv, or .txt "
+                    f"for edge-point input: {', '.join(point_inputs)}"
+                )
+    methods = (
+        [item.strip().lower() for item in args.methods.split(",")]
+        if args.method == "compare"
+        else [args.method]
+    )
+    if (
+        args.preprocess == "median_filter"
+        and any(method != "hough" for method in methods)
+        and not args.green_ref
+    ):
+        parser.error("--green-ref is required with --preprocess median_filter")
+    if args.method == "cibica" and args.rmin > args.rmax:
+        parser.error("--rmin must be less than or equal to --rmax")
+    if args.method == "hough" and args.min_radius > args.max_radius:
+        parser.error("--min-radius must be less than or equal to --max-radius")
 
 
 def _run_compare(args: argparse.Namespace) -> int:
@@ -325,11 +497,17 @@ def _run_compare(args: argparse.Namespace) -> int:
         else:
             from cibica.draw import color_name, select_overlay_colors
 
-            for source, circles in zip(inputs, circles_by_input, strict=True):
+            for index, (source, circles) in enumerate(
+                zip(inputs, circles_by_input, strict=True), start=1
+            ):
                 image = load_image(source)
                 colors = select_overlay_colors(image, circles[0], len(circles))
                 written = save_results(
-                    args.output if single else _output_for_input(args.output, source),
+                    (
+                        args.output
+                        if single
+                        else _output_for_input(args.output, source, index)
+                    ),
                     list(zip(methods, circles, strict=True)),
                     source=source,
                     image=image,
@@ -359,10 +537,12 @@ def main(argv: list[str] | None = None) -> int:
     if argv and argv[0] not in subcommands and not argv[0].startswith("-"):
         argv = ["cibica", *argv]
 
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
     if args.method is None:
-        _build_parser().print_help()
+        parser.print_help()
         return 2
+    _validate_args(args, parser)
     if args.method == "compare":
         return _run_compare(args)
 
@@ -447,10 +627,12 @@ def main(argv: list[str] | None = None) -> int:
             if not args.quiet:
                 print(f"saved: {written}", file=sys.stderr)
         else:
-            for source, circle in zip(inputs, circles, strict=True):
+            for index, (source, circle) in enumerate(
+                zip(inputs, circles, strict=True), start=1
+            ):
                 image = load_image(source)
                 written = save_result(
-                    _output_for_input(args.output, source),
+                    _output_for_input(args.output, source, index),
                     circle,
                     method=args.method,
                     source=source,
