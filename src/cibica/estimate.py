@@ -70,7 +70,23 @@ def _resolve_input(data) -> tuple[str, np.ndarray]:
 
 
 def _is_batch_input(data: Any) -> bool:
-    """Return whether ``data`` is a sequence of inputs, not one point/image array."""
+    """Return whether ``data`` is a sequence of inputs, not one point/image array.
+
+    A list of two ``[x, y]`` pairs is ambiguous on its face: it could be one
+    edge-point set of two points, or a batch of two inputs. The rule that
+    resolves it, and every other overlap, is *rank and element type*, never
+    length:
+
+    - Every element a path or an array -> batch. This is the only way to ask
+      for a two-input batch of point sets given as plain lists, because a
+      nested list of pairs reads as one point set.
+    - An ``(N, 2)`` numeric array or nested list -> one input, ``N`` edge
+      points. So ``[[10, 20], [30, 40]]`` is one input with two points.
+    - Rank 3 ending in 2 -> batch of point sets; rank 3 ending in 3 (or a bare
+      rank-2 array that is not ``(N, 2)``) -> one image.
+    - A ragged sequence, which no single array can hold -> batch.
+    - An empty sequence -> batch, yielding an empty result list.
+    """
     if isinstance(data, (str, Path, np.ndarray)):
         return False
     if isinstance(data, Sequence):
@@ -245,6 +261,10 @@ def estimate(
     Args:
         data: One input path/image/edge-point array, or a sequence of such
             inputs. Edge-point arrays are ``(N, 2)`` ``[[row, col], ...]``.
+            Whether a sequence is one input or a batch is decided by rank and
+            element type, not by length, so ``[[10, 20], [30, 40]]`` is one
+            input holding two edge points; pass paths or arrays to request a
+            two-input batch. See :func:`_is_batch_input` for the full rule.
         method: One of :data:`METHODS`.
         n_jobs: Worker processes for sequence input. ``0`` uses one worker per
             performance core; ``1`` runs in-process.

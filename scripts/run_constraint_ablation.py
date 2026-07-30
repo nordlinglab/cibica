@@ -31,6 +31,7 @@ def main(
     seed: int = 42,
     report_constraints: bool = False,
     output: str | Path | None = None,
+    n_jobs: int = 0,
 ) -> None:
     """Compute, print, and save the constraint-ablation table."""
     if frames is not None and frames <= 0:
@@ -39,6 +40,8 @@ def main(
         raise ValueError("replicates must be greater than zero")
     if seed < 0:
         raise ValueError("seed must be zero or greater")
+    if n_jobs < 0:
+        raise ValueError("n_jobs must be zero or greater")
     pin_compute_threads()
 
     from cibica.experiments import run_constraint_ablation
@@ -49,6 +52,7 @@ def main(
         replicates=replicates,
         seed=seed,
         report_constraints=report_constraints,
+        n_jobs=n_jobs,
     )
     output_path = (
         Path(output)
@@ -87,6 +91,16 @@ if __name__ == "__main__":
         help="report on stderr when a bound changes an estimate",
     )
     parser.add_argument(
+        "--n-jobs",
+        type=nonnegative_int,
+        default=0,
+        metavar="N",
+        help=(
+            "worker processes over frames (0 = one per performance core; "
+            "1 = sequential); the table is identical for any value"
+        ),
+    )
+    parser.add_argument(
         "-o",
         "--output",
         type=_csv_path,
@@ -103,4 +117,5 @@ if __name__ == "__main__":
         seed=arguments.seed,
         report_constraints=arguments.report_constraints,
         output=arguments.output,
+        n_jobs=arguments.n_jobs,
     )

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,7 +20,7 @@ from cibica.analysis.robust_statistics import (
     significance_stars,
 )
 from cibica.estimate import _estimate_cibica_no_consensus, estimate
-from cibica.parallel import task_rng
+from cibica.parallel import map_tasks, task_rng
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
 
 DEFAULT_REF_CONFIGS = ("GL80", "GL82", "GL84")
@@ -38,6 +38,21 @@ class AblationResult:
 
     rows: list[dict[str, str | float]]
     scores: dict[str, np.ndarray]
+
+
+@dataclass(frozen=True, slots=True)
+class AblationTask:
+    """Picklable inputs for every variant on one dataset frame."""
+
+    data_dir: Path
+    frame_index: int
+    filename: str
+    x_ground_truth: float
+    y_ground_truth: float
+    r_ground_truth: float
+    green_levels: tuple[int, ...]
+    n_triplets: int
+    seed: int | None
 
 
 def cibica_no_consensus(
@@ -85,73 +100,115 @@ def _estimate_variant(
     )
 
 
+def _run_ablation_frame(task: AblationTask) -> tuple[int, dict[str, float | None]]:
+    """Score every variant on one frame, averaged over the reference configs.
+
+    Each estimate draws from a stream keyed on
+    ``(frame_index, config_index, variant)``, so the returned means do not
+    depend on which worker ran the frame or in what order.
+    """
+    image = cv2.imread(str(task.data_dir / "black_sphere_ROI" / f"{task.filename}.png"))
+    if image is None:
+        return task.frame_index, dict.fromkeys(VARIANTS)
+    height, width = image.shape[:2]
+    ground_truth_circle = (
+        task.x_ground_truth,
+        task.y_ground_truth,
+        task.r_ground_truth,
+    )
+    by_config: dict[str, list[float]] = {variant: [] for variant in VARIANTS}
+    for config_index, green_level in enumerate(task.green_levels):
+        try:
+            _, _, edgels = preprocess_green_level(image, green_level)
+        except Exception:
+            continue
+        if len(edgels) < 3:
+            continue
+        for variant in VARIANTS:
+            try:
+                x, y, radius = _estimate_variant(
+                    variant,
+                    edgels,
+                    width,
+                    height,
+                    task.n_triplets,
+                    task_rng(
+                        task.seed,
+                        task.frame_index,
+                        config_index,
+                        variant,
+                    ),
+                )
+                score = (
+                    0.0
+                    if np.isnan(x) or radius <= 0
+                    else jaccard_circles(
+                        *ground_truth_circle,
+                        x,
+                        y,
+                        radius,
+                    )
+                )
+            except Exception:
+                score = 0.0
+            by_config[variant].append(score)
+    return task.frame_index, {
+        variant: float(np.mean(by_config[variant])) if by_config[variant] else None
+        for variant in VARIANTS
+    }
+
+
 def run_ablation_study(
     data_dir: str | Path,
     *,
     n_triplets: int = 500,
     ref_configs: Sequence[str] = DEFAULT_REF_CONFIGS,
     seed: int | None = None,
+    n_jobs: int = 1,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> AblationResult:
-    """Compute per-variant scores and paired comparisons without file output."""
+    """Compute per-variant scores and paired comparisons without file output.
+
+    Frames are distributed over ``n_jobs`` worker processes; the result is
+    identical for any worker count when ``seed`` is given.
+    """
     data_path = Path(data_dir)
     ground_truth = pd.read_csv(data_path / "Ground_Truth.csv")
-    configs = [
+    selected = [
         config
         for config in get_preprocessing_configs()
         if config["name"] in ref_configs
     ]
+    if any(config["green_level"] is None for config in selected):
+        raise ValueError("ref_configs must name green-level configurations only")
+    green_levels = tuple(int(config["green_level"]) for config in selected)
     filenames = ground_truth["Filename"].tolist()
     scores = {variant: np.full(len(filenames), np.nan) for variant in VARIANTS}
 
-    for frame_index, filename in enumerate(filenames):
-        image = cv2.imread(str(data_path / "black_sphere_ROI" / f"{filename}.png"))
-        if image is None:
-            continue
-        height, width = image.shape[:2]
-        row = ground_truth.iloc[frame_index]
-        ground_truth_circle = (float(row["X"]), float(row["Y"]), float(row["R"]))
-        by_config: dict[str, list[float]] = {variant: [] for variant in VARIANTS}
-        for config_index, config in enumerate(configs):
-            try:
-                _, _, edgels = preprocess_green_level(
-                    image,
-                    config["green_level"],
-                )
-            except Exception:
-                continue
-            if len(edgels) < 3:
-                continue
-            for variant in VARIANTS:
-                try:
-                    x, y, radius = _estimate_variant(
-                        variant,
-                        edgels,
-                        width,
-                        height,
-                        n_triplets,
-                        task_rng(
-                            seed,
-                            frame_index,
-                            config_index,
-                            variant,
-                        ),
-                    )
-                    score = (
-                        0.0
-                        if np.isnan(x) or radius <= 0
-                        else jaccard_circles(
-                            *ground_truth_circle,
-                            x,
-                            y,
-                            radius,
-                        )
-                    )
-                except Exception:
-                    score = 0.0
-                by_config[variant].append(score)
-        for variant in VARIANTS:
-            if by_config[variant]:
-                scores[variant][frame_index] = float(np.mean(by_config[variant]))
+    tasks = [
+        AblationTask(
+            data_dir=data_path,
+            frame_index=frame_index,
+            filename=filename,
+            x_ground_truth=float(ground_truth.iloc[frame_index]["X"]),
+            y_ground_truth=float(ground_truth.iloc[frame_index]["Y"]),
+            r_ground_truth=float(ground_truth.iloc[frame_index]["R"]),
+            green_levels=green_levels,
+            n_triplets=n_triplets,
+            seed=seed,
+        )
+        for frame_index, filename in enumerate(filenames)
+    ]
+    for frame_index, per_variant in map_tasks(
+        _run_ablation_frame,
+        tasks,
+        n_jobs=n_jobs,
+        chunksize=4,
+        on_progress=on_progress,
+    ):
+        for variant, value in per_variant.items():
+            if value is not None:
+                scores[variant][frame_index] = value
 
     available = ~np.isnan(scores["full"])
     scores = {variant: values[available] for variant, values in scores.items()}

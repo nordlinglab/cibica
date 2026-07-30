@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the statistical methods backing the manuscript's quantities.
 
-Each method closes a gap where the experiment previously reported nothing or
-reported a different quantity than the manuscript declared. These tests pin the
-contracts on constructed data whose answers are known by hand.
+Each method supplies a quantity the manuscript declares, at the aggregation
+level it declares it. These tests pin the contracts on constructed data whose
+answers are known by hand.
 """
 
 from __future__ import annotations
@@ -148,10 +148,11 @@ class TestQiDegeneracy:
     def test_diverged_fit_returns_sentinel_and_warns(self, capsys):
         import numpy as np
 
-        from cibica.baselines.qi import qi_2024
+        from cibica.estimators.qi import qi_2024
 
         # A noiseless circle makes the generalised eigenproblem
-        # ill-conditioned; QI used to return a radius of order 1e14.
+        # ill-conditioned, and the unguarded solution blows up to a radius of
+        # order 1e14, which must be reported as no circle rather than returned.
         t = np.linspace(0, 2 * np.pi, 120, endpoint=False)
         pts = np.column_stack([12 + 7 * np.sin(t), 40 + 7 * np.cos(t)])
         center, r = qi_2024(pts)
@@ -161,7 +162,7 @@ class TestQiDegeneracy:
     def test_collinear_points_do_not_return_a_circle(self):
         import numpy as np
 
-        from cibica.baselines.qi import qi_2024
+        from cibica.estimators.qi import qi_2024
 
         line = np.column_stack([np.arange(20.0), np.arange(20.0) * 0.5 + 3])
         _, r = qi_2024(line)
@@ -171,7 +172,7 @@ class TestQiDegeneracy:
         """The guard must not reject an ordinary noisy circle."""
         import numpy as np
 
-        from cibica.baselines.qi import qi_2024
+        from cibica.estimators.qi import qi_2024
 
         rng = np.random.default_rng(0)
         t = np.linspace(0, 2 * np.pi, 90, endpoint=False)
@@ -221,8 +222,8 @@ class TestConstraints:
         import numpy as np
 
         from cibica import Constraints
-        from cibica.baselines.rcd import rcd
-        from cibica.baselines.rht import rht
+        from cibica.estimators.rcd import rcd
+        from cibica.estimators.rht import rht
 
         t = np.linspace(0, 2 * np.pi, 120, endpoint=False)
         pts = np.column_stack([20 + 11 * np.sin(t), 20 + 11 * np.cos(t)])
@@ -250,9 +251,9 @@ class TestConstraints:
         """
         import inspect
 
-        from cibica.baselines.qi import qi_2024
-        from cibica.baselines.rcd import rcd
-        from cibica.baselines.rht import rht
+        from cibica.estimators.qi import qi_2024
+        from cibica.estimators.rcd import rcd
+        from cibica.estimators.rht import rht
 
         assert "constraints" not in inspect.signature(qi_2024).parameters
         for fn in (rht, rcd):

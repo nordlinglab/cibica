@@ -17,15 +17,45 @@ only what they need:
   (component ablation: refinement and consensus).
 - :mod:`cibica.visualization.qualitative` --- paper Figs. 15 and 16
   (visual comparison gallery and failure-case gallery).
+- :mod:`cibica.visualization.config_sweep` --- paper Fig. 12 and supplementary
+  Figs. S1 and S6 (accuracy across the 18 preprocessing configurations).
+- :mod:`cibica.visualization.method_comparison` --- paper Figs. 13 and 14
+  (five-method comparison at the reference configurations).
+- :mod:`cibica.visualization.diagnostics` --- supplementary Figs. S3-S5,
+  produced only under ``--supplementary``.
+
+Per-method colour, marker, and line style live in
+:mod:`cibica.visualization._style`, so every figure identifies a method the
+same way.
 
 The modules are deliberately data-driven (they take a ``data_dir`` and write to
 an ``output_dir``) so both ``run_experiment.py`` and ``run_labeling_analysis.py``
 can call them without sharing state.
 """
 
+from cibica.visualization._style import (
+    COLORS,
+    LINESTYLES,
+    MARKERS,
+    apply_publication_style,
+)
 from cibica.visualization.ablation import run_ablation_study
+from cibica.visualization.config_sweep import (
+    plot_heatmap_method_config,
+    plot_jaccard_distance,
+    plot_line_configs,
+)
+from cibica.visualization.diagnostics import (
+    plot_focal_stats,
+    plot_fps,
+    plot_summary_panel,
+)
 from cibica.visualization.error_histogram import plot_error_histogram
 from cibica.visualization.jaccard_distribution import plot_jaccard_distribution
+from cibica.visualization.method_comparison import (
+    plot_pairwise_heatmap,
+    plot_violin,
+)
 from cibica.visualization.pixel_combinations import (
     compute_edge_counts,
     plot_pixel_combinations,
@@ -42,6 +72,10 @@ from cibica.visualization.triplet_sweep import (
 )
 
 __all__ = [
+    "COLORS",
+    "LINESTYLES",
+    "MARKERS",
+    "apply_publication_style",
     "plot_error_histogram",
     "plot_jaccard_distribution",
     "compute_edge_counts",
@@ -53,4 +87,12 @@ __all__ = [
     "plot_visual_comparison_result",
     "plot_failure_gallery",
     "plot_failure_gallery_result",
+    "plot_line_configs",
+    "plot_heatmap_method_config",
+    "plot_jaccard_distance",
+    "plot_violin",
+    "plot_pairwise_heatmap",
+    "plot_focal_stats",
+    "plot_fps",
+    "plot_summary_panel",
 ]

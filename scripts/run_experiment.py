@@ -47,19 +47,34 @@ if __name__ == "__main__":
     parser.add_argument(
         "--full",
         action="store_true",
-        help="enable repeated triplet and component-ablation studies",
+        help=(
+            "also run the component ablation (Table 7) and repeat the triplet "
+            "sweep --replicates times per frame; the run-to-run range and CV "
+            "columns of Table 6 and Fig. 17 need --replicates above 1 as well "
+            "(the paper uses 100)"
+        ),
     )
     parser.add_argument(
         "--supplementary",
         action="store_true",
-        help="also generate supplementary diagnostic figures",
+        help=(
+            "also generate the supplementary diagnostic figures FigS1-FigS6 "
+            "(heatmap, best-GL violin, focal-test lollipop, FPS bar, summary "
+            "panel, Jaccard distance)"
+        ),
     )
     parser.add_argument(
         "--n-jobs",
         type=nonnegative_int,
         default=0,
         metavar="N",
-        help="worker processes (0 = one per performance core; 1 = sequential)",
+        help=(
+            "worker processes for the frame, triplet, ablation and qualitative "
+            "runs (0 = one per performance core; 1 = sequential). BLAS, OpenMP "
+            "and OpenCV are pinned to one thread per process, so N is the "
+            "number of cores used. With --seed the results are identical for "
+            "any N. The preprocessing timing always runs serially"
+        ),
     )
     parser.add_argument(
         "-o",

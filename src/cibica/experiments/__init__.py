@@ -2,15 +2,23 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compute-only drivers for the CIBICA reproducibility studies."""
 
-from cibica.experiments.ablation import AblationResult, run_ablation_study
-from cibica.experiments.constraint_ablation import run_constraint_ablation
-from cibica.experiments.edge_counts import compute_edge_counts
+from cibica.experiments.ablation import (
+    AblationResult,
+    AblationTask,
+    run_ablation_study,
+)
+from cibica.experiments.constraint_ablation import (
+    ConstraintAblationTask,
+    run_constraint_ablation,
+)
+from cibica.experiments.edge_counts import EdgeCountTask, compute_edge_counts
 from cibica.experiments.frame_config_sweep import (
     FrameConfigTask,
     run_frame_config_sweep,
 )
 from cibica.experiments.preprocessing_throughput import preprocessing_throughput
 from cibica.experiments.qualitative import (
+    QualitativeTask,
     score_cibica_vs_hough,
     score_cibica_vs_qi,
 )
@@ -20,7 +28,11 @@ from cibica.experiments.triplet_sweep import (
 )
 
 __all__ = [
+    "AblationTask",
+    "ConstraintAblationTask",
+    "EdgeCountTask",
     "FrameConfigTask",
+    "QualitativeTask",
     "AblationResult",
     "TripletSweepResult",
     "compute_edge_counts",

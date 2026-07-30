@@ -24,17 +24,29 @@ from cibica.analysis.robust_statistics import (
     rank_biserial,
     significance_stars,
 )
+from cibica.analysis.study_summaries import (
+    best_config_stats,
+    compute_focal_stats,
+    pairwise_comparisons,
+    reference_config_indices,
+    reference_scores,
+)
 from cibica.analysis.subjects import subject_ids
 from cibica.analysis.wilcoxon_signed_rank import wilcoxon_signed_rank
 
 __all__ = [
+    "best_config_stats",
+    "compute_focal_stats",
     "end_to_end_fps",
     "jaccard_circles",
     "least_squares_circle",
     "hodges_lehmann_ci",
     "leave_one_subject_out",
+    "pairwise_comparisons",
     "per_subject_statistics",
     "rank_biserial",
+    "reference_config_indices",
+    "reference_scores",
     "significance_stars",
     "subject_ids",
     "wilcoxon_signed_rank",

@@ -102,3 +102,107 @@ def test_constraint_ablation_driver_returns_every_method_and_regime():
     assert set(result["Method"]) == {"CIBICA", "HOUGH", "RHT", "RCD", "QI"}
     assert set(result["Regime"]) == {"unconstrained", "radius_only", "matched"}
     assert (result["n"] == 3).all()
+
+
+# ===========================================================================
+# Qualitative comparison, edge counts, and their refusal cases
+# ===========================================================================
+
+_HAS_DATA = (DATA / "Ground_Truth.csv").is_file()
+requires_data = pytest.mark.skipif(
+    not _HAS_DATA, reason="dataset not present (data/ is separate from the package)"
+)
+
+
+def _two_frames():
+    """The first two ground-truth rows, so the drivers run in well under a second."""
+    return pd.read_csv(DATA / "Ground_Truth.csv").head(2)
+
+
+@requires_data
+@pytest.mark.parametrize(
+    ("driver", "baseline_column"),
+    [("score_cibica_vs_hough", "j_cht"), ("score_cibica_vs_qi", "j_qi")],
+)
+def test_qualitative_drivers_score_cibica_and_one_baseline(driver, baseline_column):
+    from cibica.experiments import qualitative
+
+    truth = _two_frames()
+    returned_truth, scores = getattr(qualitative, driver)(
+        DATA, ground_truth=truth, seed=42, n_jobs=1
+    )
+    assert returned_truth is truth
+    assert list(scores["Filename"]) == list(truth["Filename"])
+    for column in ("x_cibica", "y_cibica", "r_cibica", "j_cibica", baseline_column):
+        assert column in scores.columns
+    # Jaccard is a ratio of areas, so every score is a proportion.
+    assert ((scores["j_cibica"] >= 0) & (scores["j_cibica"] <= 1)).all()
+
+
+@requires_data
+def test_qualitative_driver_is_reproducible_under_a_seed():
+    from cibica.experiments import qualitative
+
+    truth = _two_frames()
+    first = qualitative.score_cibica_vs_qi(DATA, truth, seed=42, n_jobs=1)[1]
+    second = qualitative.score_cibica_vs_qi(DATA, truth, seed=42, n_jobs=1)[1]
+    assert first.equals(second)
+
+
+@requires_data
+def test_qualitative_driver_reports_a_missing_frame():
+    from cibica.experiments import qualitative
+
+    truth = pd.DataFrame([{"Filename": "no_such_frame", "X": 1.0, "Y": 2.0, "R": 3.0}])
+    with pytest.raises(FileNotFoundError, match="Could not read ROI frame"):
+        qualitative.score_cibica_vs_qi(DATA, truth, n_jobs=1)
+
+
+@pytest.mark.parametrize("driver", ["score_cibica_vs_hough", "score_cibica_vs_qi"])
+def test_qualitative_drivers_reject_a_non_green_level_config(driver):
+    from cibica.experiments import qualitative
+
+    with pytest.raises(ValueError, match="not a green-level configuration"):
+        getattr(qualitative, driver)(DATA, config_name="Med9")
+
+
+@requires_data
+def test_edge_counts_returns_one_count_per_frame():
+    from cibica.experiments.edge_counts import compute_edge_counts
+
+    counts = compute_edge_counts(DATA, "GL82", n_jobs=1)
+    assert counts.shape == (144,)
+    assert counts.min() >= 3
+
+
+def test_edge_counts_rejects_a_non_green_level_config():
+    from cibica.experiments.edge_counts import compute_edge_counts
+
+    with pytest.raises(ValueError, match="not a green-level configuration"):
+        compute_edge_counts(DATA, "Med9")
+    with pytest.raises(ValueError, match="not a green-level configuration"):
+        compute_edge_counts(DATA, "no-such-config")
+
+
+def test_edge_counts_drops_frames_it_cannot_read(monkeypatch, tmp_path):
+    """An unreadable frame is skipped, not counted as zero edgels."""
+    from cibica.experiments import edge_counts as module
+
+    ground_truth = pd.DataFrame({"Filename": ["a", "b"]})
+    monkeypatch.setattr(module.pd, "read_csv", lambda _path: ground_truth)
+    monkeypatch.setattr(module.cv2, "imread", lambda _path: None)
+    assert module.compute_edge_counts(tmp_path, "GL82", n_jobs=1).size == 0
+
+
+def test_edge_counts_drops_frames_whose_preprocessing_fails(monkeypatch, tmp_path):
+    from cibica.experiments import edge_counts as module
+
+    ground_truth = pd.DataFrame({"Filename": ["a"]})
+    monkeypatch.setattr(module.pd, "read_csv", lambda _path: ground_truth)
+    monkeypatch.setattr(module.cv2, "imread", lambda _path: np.zeros((4, 4, 3)))
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("preprocessing failed")
+
+    monkeypatch.setattr(module, "preprocess_green_level", explode)
+    assert module.compute_edge_counts(tmp_path, "GL82", n_jobs=1).size == 0

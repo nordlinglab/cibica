@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from cibica.analysis.circle_geometry import least_squares_circle
+from cibica.analysis.circle_geometry import jaccard_circles, least_squares_circle
 
 _DATA = Path(__file__).resolve().parents[3] / "data"
 
@@ -56,24 +56,6 @@ def _points(row):
     xs = row[["x1", "x2", "x3", "x4"]].to_numpy(dtype=float) / scale
     ys = row[["y1", "y2", "y3", "y4"]].to_numpy(dtype=float) / scale
     return xs, ys
-
-
-def jaccard_circles(x1, y1, r1, x2, y2, r2):
-    """Analytical Jaccard index (IoU) between two circles."""
-    if r1 <= 0 or r2 <= 0:
-        return 0.0
-    d = math.hypot(x1 - x2, y1 - y2)
-    if d >= r1 + r2:
-        return 0.0
-    big, small = max(r1, r2), min(r1, r2)
-    if d <= big - small:
-        return (small / big) ** 2
-    d1 = (d**2 + r1**2 - r2**2) / (2 * d)
-    d2 = d - d1
-    a1 = 2 * math.acos(max(-1.0, min(1.0, d1 / r1)))
-    a2 = 2 * math.acos(max(-1.0, min(1.0, d2 / r2)))
-    inter = 0.5 * r1**2 * (a1 - math.sin(a1)) + 0.5 * r2**2 * (a2 - math.sin(a2))
-    return inter / (math.pi * (r1**2 + r2**2) - inter)
 
 
 def compute_labeling_consistency(labelling=DEFAULT_LABELLING):

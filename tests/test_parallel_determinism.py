@@ -21,7 +21,13 @@ import pytest
 from cibica import parallel
 from cibica.core import sample_triplets
 from cibica.estimate import estimate
+from cibica.experiments import ablation as ablation_module
+from cibica.experiments import constraint_ablation as constraint_module
 from cibica.experiments import frame_config_sweep as sweep
+from cibica.experiments.ablation import run_ablation_study
+from cibica.experiments.constraint_ablation import run_constraint_ablation
+from cibica.experiments.edge_counts import compute_edge_counts
+from cibica.experiments.qualitative import score_cibica_vs_qi
 from cibica.experiments.triplet_sweep import run_triplet_sweep
 from cibica.parallel import map_tasks, task_rng
 
@@ -322,6 +328,126 @@ def test_parallel_matches_sequential(workers):
         )
 
 
+# ===========================================================================
+# The remaining experiment drivers: ablation, constraint ablation, edge counts,
+# qualitative comparison. Each distributes whole frames, so the contract is the
+# same as the sweep's -- the numbers must not move with the worker count.
+#
+# A small corner of the grid is used throughout: the full drivers run all 144
+# frames, which is far more work than the contract needs to be pinned.
+# ===========================================================================
+
+# One reference config and a small triplet budget keep the ablation near a
+# second while still exercising all three variants on every frame.
+_ABLATION_KWARGS = {"n_triplets": 20, "ref_configs": ("GL80",), "seed": SEED}
+_CONSTRAINT_KWARGS = {"frames": 4, "replicates": 1, "seed": SEED}
+
+
+def _first_frames(count):
+    """The first ``count`` dataset frames as ``(index, name, x, y, r)`` tuples."""
+    import pandas as pd
+
+    ground_truth = pd.read_csv(DATA / "Ground_Truth.csv").head(count)
+    return [
+        (index, row["Filename"], float(row["X"]), float(row["Y"]), float(row["R"]))
+        for index, (_, row) in enumerate(ground_truth.iterrows())
+    ]
+
+
+def _ablation_comparable(result):
+    """Flatten an AblationResult into arrays keyed by variant."""
+    return {variant: values.copy() for variant, values in result.scores.items()}
+
+
+def _forward_matches_backward(worker, tasks):
+    """Whether running the tasks back to front gives the same per-task results."""
+    forward = [worker(task) for task in tasks]
+    backward = [worker(task) for task in reversed(tasks)]
+    return forward == backward[::-1]
+
+
+def test_ablation_frame_results_are_independent_of_evaluation_order():
+    """Each frame's scores depend on the task alone, not on when it ran.
+
+    This is the property that makes the worker count irrelevant. Unlike the
+    process-pool tests below it holds in any environment, so it still guards
+    the contract where named semaphores are unavailable.
+    """
+    tasks = [
+        ablation_module.AblationTask(
+            data_dir=DATA,
+            frame_index=index,
+            filename=name,
+            x_ground_truth=x,
+            y_ground_truth=y,
+            r_ground_truth=r,
+            green_levels=(80,),
+            n_triplets=20,
+            seed=SEED,
+        )
+        for index, name, x, y, r in _first_frames(4)
+    ]
+    assert _forward_matches_backward(ablation_module._run_ablation_frame, tasks)
+
+
+def test_constraint_ablation_frame_results_are_independent_of_order():
+    """Constraint-ablation frames likewise carry no cross-frame state."""
+    tasks = [
+        constraint_module.ConstraintAblationTask(
+            data_dir=DATA,
+            frame_index=index,
+            filename=name,
+            x_ground_truth=x,
+            y_ground_truth=y,
+            r_ground_truth=r,
+            green_levels=(80,),
+            replicates=1,
+            seed=SEED,
+            report_constraints=False,
+        )
+        for index, name, x, y, r in _first_frames(3)
+    ]
+    assert _forward_matches_backward(constraint_module._run_constraint_frame, tasks)
+
+
+@requires_process_pool
+def test_ablation_is_independent_of_worker_count():
+    """Worker count must not change any ablation number."""
+    sequential = run_ablation_study(DATA, n_jobs=1, **_ABLATION_KWARGS)
+    parallel = run_ablation_study(DATA, n_jobs=2, **_ABLATION_KWARGS)
+    assert sequential.rows == parallel.rows
+    sequential_scores = _ablation_comparable(sequential)
+    parallel_scores = _ablation_comparable(parallel)
+    assert sequential_scores.keys() == parallel_scores.keys()
+    for variant, values in sequential_scores.items():
+        np.testing.assert_array_equal(values, parallel_scores[variant], err_msg=variant)
+
+
+@requires_process_pool
+def test_constraint_ablation_is_independent_of_worker_count():
+    """Worker count must not change any constraint-ablation number."""
+    sequential = run_constraint_ablation(DATA, n_jobs=1, **_CONSTRAINT_KWARGS)
+    parallel = run_constraint_ablation(DATA, n_jobs=2, **_CONSTRAINT_KWARGS)
+    assert sequential.equals(parallel)
+
+
+@requires_process_pool
+def test_edge_counts_are_independent_of_worker_count():
+    """Edge counts stay in dataset order regardless of worker count."""
+    np.testing.assert_array_equal(
+        compute_edge_counts(DATA, "GL82", n_jobs=1),
+        compute_edge_counts(DATA, "GL82", n_jobs=2),
+    )
+
+
+@requires_process_pool
+def test_qualitative_scores_are_independent_of_worker_count():
+    """The qualitative comparison frames match between 1 and 2 workers."""
+    _truth, sequential = score_cibica_vs_qi(DATA, seed=SEED, n_jobs=1)
+    _truth, parallel = score_cibica_vs_qi(DATA, seed=SEED, n_jobs=2)
+    assert sequential.equals(parallel)
+
+
 def test_replicates_actually_vary():
     """Guard against a degenerate RNG that would make replicates identical.
 
@@ -337,3 +463,33 @@ def test_replicates_actually_vary():
             assert js.size == REPLICATES
             spreads.append(float(js.std()))
     assert any(s > 0 for s in spreads), "no stochastic variation across replicates"
+
+
+def test_pin_compute_threads_tolerates_a_missing_opencv(monkeypatch):
+    """Thread limits are still applied when OpenCV is not installed.
+
+    ``cibica.parallel`` is deliberately import-light so a caller can pin
+    threads before the numerical stack loads; OpenCV may legitimately be
+    absent at that moment.
+    """
+    import builtins
+
+    for name in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    real_import = builtins.__import__
+
+    def without_cv2(name, *args, **kwargs):
+        if name == "cv2":
+            raise ImportError("no cv2")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", without_cv2)
+    parallel.pin_compute_threads()  # must not raise
+    assert parallel.os.environ["OMP_NUM_THREADS"] == "1"

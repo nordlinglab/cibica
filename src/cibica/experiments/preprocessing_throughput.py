@@ -1,6 +1,22 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""Compute preprocessing throughput over the study configurations."""
+"""Compute preprocessing throughput over the study configurations.
+
+This driver is a wall-clock measurement, not a computation whose result is
+worker-count invariant, so it must stay serial and must run before any other
+experiment in a reproduction run. Two properties make it fragile:
+
+- Concurrent load inflates every timing, because the measured loop then
+  competes for the same cores and memory bandwidth.
+- Preceding all-core work leaves the performance cores thermally throttled, so
+  a measurement taken afterwards reads faster-than-cold hardware and drifts
+  between runs.
+
+Do not route :func:`preprocessing_throughput` through
+:func:`cibica.parallel.map_tasks` and do not give it an ``n_jobs`` parameter:
+distributing the loop would measure aggregate throughput of N loaded cores
+instead of the single-core per-frame latency the manuscript reports.
+"""
 
 from __future__ import annotations
 
@@ -41,7 +57,13 @@ def preprocessing_throughput(
     limit: int | None = None,
     warmup: bool = True,
 ) -> dict:
-    """Time all preprocessing configurations over the selected frames."""
+    """Time all preprocessing configurations over the selected frames.
+
+    The measurement is single-threaded by construction; see the module
+    docstring for why it must stay that way and run first. ``warmup`` runs one
+    unmeasured pass so the reported time excludes first-touch page faults and
+    OpenCV's lazy kernel initialisation.
+    """
     if repeats <= 0:
         raise ValueError("repeats must be positive")
     frames = _load_frames(Path(data_dir), limit)

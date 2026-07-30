@@ -16,7 +16,6 @@ FORBIDDEN = {
         "cibica.experiments",
         "cibica.visualization",
         "cibica.core",
-        "cibica.baselines",
         "cibica.estimate",
         "cibica.preprocessing",
     ),
@@ -24,7 +23,6 @@ FORBIDDEN = {
         "cibica.estimators",
         "cibica.experiments",
         "cibica.core",
-        "cibica.baselines",
         "cibica.estimate",
         "cibica.preprocessing",
     ),
@@ -39,9 +37,22 @@ FORBIDDEN = {
         "cibica.preprocessing",
     ),
     "experiments": (
-        "cibica.baselines",
         "cibica.core",
         "cibica.estimators",
+        "cibica.visualization",
+    ),
+    # draw is a rendering utility shared by io and visualization, so it must
+    # not reach back into estimation or the study drivers.
+    "draw": (
+        "cibica.analysis",
+        "cibica.cli",
+        "cibica.core",
+        "cibica.estimate",
+        "cibica.estimators",
+        "cibica.experiments",
+        "cibica.io",
+        "cibica.preprocessing",
+        "cibica.reproduction",
         "cibica.visualization",
     ),
 }
@@ -76,15 +87,23 @@ def _imports(path: Path) -> list[tuple[int, str, bool]]:
     return found
 
 
+def _python_files(directory: Path):
+    """Every module under ``directory``, including nested subpackages.
+
+    Recursive so that turning a module into a package (cli, draw, reproduction)
+    cannot silently drop its files out of these checks.
+    """
+    return sorted(
+        path
+        for path in directory.rglob("*.py")
+        if path.is_file() and "__pycache__" not in path.parts
+    )
+
+
 @pytest.mark.parametrize("package_name", sorted(FORBIDDEN))
 def test_package_has_no_forbidden_import_edges(package_name):
     violations = []
-    paths = (
-        path
-        for path in (PACKAGE / package_name).iterdir()
-        if path.is_file() and path.suffix == ".py"
-    )
-    for path in sorted(paths):
+    for path in _python_files(PACKAGE / package_name):
         relative = str(path.relative_to(PACKAGE))
         for line, imported, dynamic in _imports(path):
             if imported.startswith(FORBIDDEN[package_name]):
@@ -97,9 +116,7 @@ def test_package_has_no_forbidden_import_edges(package_name):
 def test_dynamic_compatibility_exceptions_are_exact_and_present():
     found = set()
     for package_name in FORBIDDEN:
-        for path in (PACKAGE / package_name).iterdir():
-            if not path.is_file() or path.suffix != ".py":
-                continue
+        for path in _python_files(PACKAGE / package_name):
             relative = str(path.relative_to(PACKAGE))
             for _line, imported, dynamic in _imports(path):
                 if dynamic and (relative, imported) in COMPATIBILITY_DYNAMIC_IMPORTS:
@@ -109,9 +126,7 @@ def test_dynamic_compatibility_exceptions_are_exact_and_present():
 
 def test_package_imports_do_not_pin_threads_at_module_scope():
     violations = []
-    for path in PACKAGE.iterdir():
-        if not path.is_file() or path.suffix != ".py":
-            continue
+    for path in _python_files(PACKAGE):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -124,5 +139,6 @@ def test_package_imports_do_not_pin_threads_at_module_scope():
                     "setdefault",
                     "setNumThreads",
                 }:
-                    violations.append(f"{path.name}:{descendant.lineno}")
+                    relative = path.relative_to(PACKAGE)
+                    violations.append(f"{relative}:{descendant.lineno}")
     assert not violations, "\n".join(violations)

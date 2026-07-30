@@ -29,8 +29,9 @@ def resolve_rng(rng):
         ``None`` seeds the new generator *from the legacy global NumPy stream*
         rather than from fresh OS entropy.  That keeps callers who set
         ``np.random.seed(...)`` deterministic, which several existing tests and
-        scripts rely on.  It does not reproduce pre-1.4.0 values, because the
-        triplet sampler itself changed.
+        scripts rely on.  Reproducing a specific run therefore needs the same
+        cibica version as well as the same seed, because the value a seed maps
+        to depends on the triplet sampler.
     """
     if isinstance(rng, np.random.Generator):
         return rng

@@ -5,7 +5,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415).
 
-## [Unreleased]
+## [2.0.0] - 2026-07-30
 
 ### Added
 
@@ -15,6 +15,16 @@ Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415
   Generic CLI result writers create missing parent directories.
 - CLI help now documents method-specific defaults, units, accepted ranges,
   output naming, and study-script options.
+- `scripts/run_constraint_ablation.py` accepts `--n-jobs` to spread its frames
+  over worker processes, defaulting to one per performance core.
+- `--seed` states that an unseeded run differs between repeats, and
+  `--green-ref` states that it is required with `--preprocess median_filter`
+  and ignored otherwise.
+- `run_experiment.py --full` names the artefacts it adds and says that Table 6's
+  spread columns and Fig. 17 also need `--replicates` above 1;
+  `--supplementary` names FigS1-FigS6; and `--n-jobs` says which stages it
+  spreads, that seeded results are worker-count independent, and that the
+  preprocessing timing always runs serially.
 
 ### Changed
 
@@ -28,11 +38,62 @@ Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415
 - Seeded default study tables use a stable hardware-and-seed suffix such as
   `_MacBookProM4Max_42`; unseeded tables retain `_YYYYMMDD`, and explicit
   `-o`/`--output` paths bypass automatic seeded tags.
+- `cibica.reproduction` is a package holding orchestration only.
+  The table writers moved to `cibica.analysis.tables`, the aggregations they
+  format to `cibica.analysis.study_summaries`, the figures to
+  `cibica.visualization.config_sweep`, `.method_comparison`, and
+  `.diagnostics`, and the console narrative to `cibica.reproduction.report`.
+  `cibica.reproduction.main` and the `DATE` output tag are unchanged, and every
+  table keeps its filename and column layout.
+- `cibica.cli` is a package: `_parser` builds the parser, `_options` holds the
+  shared options and their cross-validation, `estimate_command` runs one
+  method, and `compare` runs several.
+  `cibica.cli.main` and the `cibica` console script are unchanged.
+- `cibica.draw` is a package: `colors` owns the palette and contrast ranking,
+  `render` the vector and raster renderers, and `save` the file output and
+  legend layout.
+  Every public name is still importable from `cibica.draw` itself.
+- Method names, reference configurations, the shared radius window, and the
+  Table 5 column layout live in `cibica.study_config`, so the experiment,
+  analysis, and visualization layers agree on them without importing one
+  another.
+  Per-method colour, marker, and line style live in
+  `cibica.visualization._style`, and importing `cibica.visualization` no longer
+  mutates the caller's Matplotlib configuration; the study applies its own
+  settings through `apply_publication_style()`.
+- The preprocessing throughput measurement runs before every other experiment
+  in a reproduction run, on cold and otherwise idle hardware, so
+  `Stats_Throughput_*` no longer varies with the load left by the sweeps.
+  Its `ms_*` and `end_to_end_fps` values therefore differ from earlier runs.
+- The component-ablation, constraint-ablation, edge-count, and
+  qualitative-comparison drivers distribute whole frames over worker processes
+  and accept `n_jobs` and `on_progress`, matching the frame/config and triplet
+  sweeps.
+  Each estimate keeps drawing from a stream keyed on its position in the grid,
+  so every driver returns the same numbers for any worker count.
+  The preprocessing-throughput driver stays serial by design, because it is a
+  wall-clock measurement rather than a worker-count-invariant computation.
 
 ### Removed
 
+- **Breaking:** the `cibica.baselines` compatibility package.
+  Import the baseline estimators from `cibica.estimators`; `cibica.core` still
+  re-exports `CIBICA`.
+  The package was importable in 1.4.0, so code importing `cibica.baselines`
+  must be updated.
 - Undocumented executable test harnesses from the estimator implementation
   modules; estimator examples and checks remain in docstrings and pytest.
+- `cibica.reproduction.jaccard_circles`, `cibica.analysis.labeling.jaccard_circles`,
+  and `cibica.reproduction`'s private duplicates of the significance-star,
+  rank-biserial, and Hodges-Lehmann helpers.
+  The single implementations in `cibica.analysis` are used throughout, and
+  `cibica.analysis.jaccard_circles` is the supported import.
+  The removed copies were verified to agree with it exactly over 200,007 circle
+  pairs, including the concentric, tangent, nested, and disjoint cases, so no
+  reported quantity changes.
+- The argparse block inside `cibica.reproduction`, which duplicated the options
+  of `scripts/run_experiment.py`.
+  That script is the sole command-line entry point for the study.
 
 ## [1.4.0] - 2026-07-30
 

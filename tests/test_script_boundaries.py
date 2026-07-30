@@ -20,7 +20,6 @@ SCRIPTS = (
 ESTIMATORS = tuple((ROOT / "src" / "cibica" / "estimators").glob("*.py"))
 FORBIDDEN = (
     "cibica.core",
-    "cibica.baselines",
     "cibica.estimators",
     "cibica.estimate",
     "cibica.preprocessing",

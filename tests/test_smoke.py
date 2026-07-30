@@ -61,20 +61,19 @@ def test_public_api_present():
 
 
 def test_estimator_compatibility_imports_resolve_to_relocated_implementations():
-    from cibica.baselines.hough import HOUGH as OLD_HOUGH
-    from cibica.baselines.qi import qi_2024 as old_qi
-    from cibica.baselines.rcd import rcd as old_rcd
-    from cibica.baselines.rht import rht as old_rht
+    """cibica.core still re-exports CIBICA from its new home in estimators."""
     from cibica.core import CIBICA as OLD_CIBICA
-    from cibica.estimators import CIBICA, HOUGH, qi_2024, rcd, rht
+    from cibica.estimators import CIBICA
 
-    assert (OLD_CIBICA, OLD_HOUGH, old_qi, old_rcd, old_rht) == (
-        CIBICA,
-        HOUGH,
-        qi_2024,
-        rcd,
-        rht,
-    )
+    assert OLD_CIBICA is CIBICA
+
+
+def test_baselines_package_is_gone():
+    """cibica.baselines was removed; cibica.estimators is the only path."""
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("cibica.baselines")
 
 
 def test_no_bundled_dataset_api():
@@ -112,10 +111,9 @@ def test_18_preprocessing_configs():
 
 # RHT votes on independently sampled triplets and converges more loosely than
 # the others. Measured over 60 seeds on this point cloud, its centre error
-# exceeds 2 px in ~3% of draws -- under the current sampler and under the
-# pre-1.4.0 per-iteration one alike (Mann-Whitney p = 0.22), so the two are
-# statistically indistinguishable. The wider bound reflects that sampling
-# spread; it is still far tighter than a genuinely broken estimator would give.
+# exceeds 2 px in ~3% of draws, so a 2 px bound would be flaky. The wider bound
+# reflects that sampling spread; it is still far tighter than a genuinely
+# broken estimator would give.
 _ESTIMATE_TOL = {"cibica": 2.0, "rht": 3.5, "rcd": 2.0, "qi": 2.0}
 
 
@@ -600,7 +598,7 @@ def test_cli_compare_raster_legend_below_image(tmp_path):
 
 
 def test_raster_legend_single_row_when_it_fits():
-    from cibica.draw import _raster_legend
+    from cibica.draw.save import _raster_legend
 
     entries = [
         ("cibica", (0, 0, 255)),

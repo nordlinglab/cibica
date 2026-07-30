@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Compute the geometric-constraint ablation across all estimators."""
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -11,7 +15,7 @@ import pandas as pd
 from cibica._constraints import Constraints, set_reporting
 from cibica.analysis.circle_geometry import jaccard_circles
 from cibica.estimate import estimate
-from cibica.parallel import task_rng
+from cibica.parallel import map_tasks, task_rng
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
 
 RMIN, RMAX = 4.0, 30.0
@@ -25,6 +29,22 @@ BOUND_TYPE = {
     "QI": "none",
 }
 HOUGH_RMIN, HOUGH_RMAX = 5, 20
+
+
+@dataclass(frozen=True, slots=True)
+class ConstraintAblationTask:
+    """Picklable inputs for every regime and method on one dataset frame."""
+
+    data_dir: Path
+    frame_index: int
+    filename: str
+    x_ground_truth: float
+    y_ground_truth: float
+    r_ground_truth: float
+    green_levels: tuple[int, ...]
+    replicates: int
+    seed: int
+    report_constraints: bool
 
 
 def _constraints_for(regime: str, width: int, height: int) -> Constraints:
@@ -116,6 +136,65 @@ def _score(
     return jaccard_circles(*ground_truth, x, y, radius)
 
 
+def _run_constraint_frame(
+    task: ConstraintAblationTask,
+) -> dict[str, dict[str, list[float]]]:
+    """Score every regime, replicate, and method on one frame.
+
+    Each estimate draws from a stream keyed on
+    ``(frame_index, config_index, run_index, regime, method)``, so the scores
+    do not depend on worker count or completion order.
+    """
+    # ``set_reporting`` writes thread-local state, which a worker process does
+    # not inherit, so the flag travels with the task and is applied here.
+    set_reporting(task.report_constraints)
+    scores: dict[str, dict[str, list[float]]] = {
+        regime: {method: [] for method in METHODS} for regime in REGIMES
+    }
+    image = cv2.imread(str(task.data_dir / "black_sphere_ROI" / f"{task.filename}.png"))
+    if image is None:
+        return scores
+    height, width = image.shape[:2]
+    truth = (task.x_ground_truth, task.y_ground_truth, task.r_ground_truth)
+    for config_index, green_level in enumerate(task.green_levels):
+        try:
+            _, edge_image, edgels = preprocess_green_level(image, green_level)
+        except Exception:
+            continue
+        if len(edgels) < 4:
+            continue
+        edge_u8 = (
+            (edge_image * 255).astype(np.uint8)
+            if edge_image.max() <= 1.0
+            else edge_image.astype(np.uint8)
+        )
+        for regime in REGIMES:
+            for run_index in range(task.replicates):
+                for method in METHODS:
+                    try:
+                        value = _score(
+                            method,
+                            edgels,
+                            edge_u8,
+                            width,
+                            height,
+                            truth,
+                            regime,
+                            task_rng(
+                                task.seed,
+                                task.frame_index,
+                                config_index,
+                                run_index,
+                                regime,
+                                method,
+                            ),
+                        )
+                    except Exception:
+                        value = 0.0
+                    scores[regime][method].append(value)
+    return scores
+
+
 def run_constraint_ablation(
     data_dir: str | Path,
     *,
@@ -123,8 +202,15 @@ def run_constraint_ablation(
     replicates: int = 3,
     seed: int = 42,
     report_constraints: bool = False,
+    n_jobs: int = 1,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
-    """Return the constraint-ablation summary without writing files."""
+    """Return the constraint-ablation summary without writing files.
+
+    Frames are distributed over ``n_jobs`` worker processes and their scores
+    are concatenated in frame order, so the summary is identical for any
+    worker count.
+    """
     if replicates < 1:
         raise ValueError("replicates must be at least 1")
     set_reporting(report_constraints)
@@ -133,61 +219,40 @@ def run_constraint_ablation(
     names = ground_truth["Filename"].tolist()
     if frames is not None:
         names = names[:frames]
-    configs = [
-        config
+    green_levels = tuple(
+        int(config["green_level"])
         for config in get_preprocessing_configs()
         if config["name"] in {"GL80", "GL82", "GL84"}
-    ]
+    )
     scores: dict[str, dict[str, list[float]]] = {
         regime: {method: [] for method in METHODS} for regime in REGIMES
     }
 
-    for frame_index, name in enumerate(names):
-        image = cv2.imread(str(data_path / "black_sphere_ROI" / f"{name}.png"))
-        if image is None:
-            continue
-        height, width = image.shape[:2]
-        row = ground_truth.iloc[frame_index]
-        truth = (float(row["X"]), float(row["Y"]), float(row["R"]))
-        for config_index, config in enumerate(configs):
-            try:
-                _, edge_image, edgels = preprocess_green_level(
-                    image,
-                    config["green_level"],
-                )
-            except Exception:
-                continue
-            if len(edgels) < 4:
-                continue
-            edge_u8 = (
-                (edge_image * 255).astype(np.uint8)
-                if edge_image.max() <= 1.0
-                else edge_image.astype(np.uint8)
-            )
-            for regime in REGIMES:
-                for run_index in range(replicates):
-                    for method in METHODS:
-                        try:
-                            value = _score(
-                                method,
-                                edgels,
-                                edge_u8,
-                                width,
-                                height,
-                                truth,
-                                regime,
-                                task_rng(
-                                    seed,
-                                    frame_index,
-                                    config_index,
-                                    run_index,
-                                    regime,
-                                    method,
-                                ),
-                            )
-                        except Exception:
-                            value = 0.0
-                        scores[regime][method].append(value)
+    tasks = [
+        ConstraintAblationTask(
+            data_dir=data_path,
+            frame_index=frame_index,
+            filename=name,
+            x_ground_truth=float(ground_truth.iloc[frame_index]["X"]),
+            y_ground_truth=float(ground_truth.iloc[frame_index]["Y"]),
+            r_ground_truth=float(ground_truth.iloc[frame_index]["R"]),
+            green_levels=green_levels,
+            replicates=replicates,
+            seed=seed,
+            report_constraints=report_constraints,
+        )
+        for frame_index, name in enumerate(names)
+    ]
+    for per_frame in map_tasks(
+        _run_constraint_frame,
+        tasks,
+        n_jobs=n_jobs,
+        chunksize=2,
+        on_progress=on_progress,
+    ):
+        for regime in REGIMES:
+            for method in METHODS:
+                scores[regime][method].extend(per_frame[regime][method])
 
     rows = []
     for method in METHODS:
