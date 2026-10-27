@@ -23,6 +23,11 @@ only what they need:
   (five-method comparison at the reference configurations).
 - :mod:`cibica.visualization.diagnostics` --- supplementary Figs. S3-S5,
   produced only under ``--supplementary``.
+- :mod:`cibica.visualization.two_circle` --- round-3 Fig. R7 (target
+  lock-on against the distractor edge share of the two-circle experiment).
+- :mod:`cibica.visualization.per_configuration` --- round-3 supplementary
+  figure (Hodges-Lehmann shift of CIBICA over each baseline in every
+  configuration, R2.4).
 
 Per-method colour, marker, and line style live in
 :mod:`cibica.visualization._style`, so every figure identifies a method the
@@ -56,6 +61,7 @@ from cibica.visualization.method_comparison import (
     plot_pairwise_heatmap,
     plot_violin,
 )
+from cibica.visualization.per_configuration import plot_hl_per_configuration
 from cibica.visualization.pixel_combinations import (
     compute_edge_counts,
     plot_pixel_combinations,
@@ -94,5 +100,6 @@ __all__ = [
     "plot_pairwise_heatmap",
     "plot_focal_stats",
     "plot_fps",
+    "plot_hl_per_configuration",
     "plot_summary_panel",
 ]

@@ -40,6 +40,7 @@ import argparse
 from pathlib import Path
 
 from cibica._cli_types import DefaultsHelpFormatter, positive_int
+from cibica.output_naming import computer_label
 from cibica.parallel import pin_compute_threads
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -134,7 +135,9 @@ def _summarise(repeats_by_key, key_name):
     return pd.DataFrame(rows)
 
 
-TAG = "MacBookProM4Max"
+# Hardware label of the machine the repeats were measured on, derived at run
+# time so the output name never claims another machine.
+TAG = computer_label()
 
 
 def measure_throughput(repeats):

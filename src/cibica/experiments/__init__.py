@@ -26,6 +26,13 @@ from cibica.experiments.triplet_sweep import (
     TripletSweepResult,
     run_triplet_sweep,
 )
+from cibica.experiments.two_circle import (
+    TwoCircleResult,
+    TwoCircleTask,
+    load_datasets,
+    run_two_circle,
+    summarise_two_circle,
+)
 
 __all__ = [
     "AblationTask",
@@ -35,12 +42,17 @@ __all__ = [
     "QualitativeTask",
     "AblationResult",
     "TripletSweepResult",
+    "TwoCircleResult",
+    "TwoCircleTask",
     "compute_edge_counts",
+    "load_datasets",
     "run_frame_config_sweep",
     "run_ablation_study",
     "run_constraint_ablation",
     "run_triplet_sweep",
+    "run_two_circle",
     "preprocessing_throughput",
     "score_cibica_vs_hough",
     "score_cibica_vs_qi",
+    "summarise_two_circle",
 ]

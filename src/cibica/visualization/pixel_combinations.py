@@ -27,7 +27,7 @@ def _apply_darkgrid(ax):
     ax.tick_params(length=0)
 
 
-def compute_edge_counts(data_dir, config_name="GL82"):
+def compute_edge_counts(data_dir, config_name="GL72"):
     """Compatibility wrapper for the relocated edge-count computation."""
     relocated = import_module("cibica.experiments.edge_counts").compute_edge_counts
     return relocated(data_dir, config_name)

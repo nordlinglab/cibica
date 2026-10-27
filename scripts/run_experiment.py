@@ -99,6 +99,16 @@ if __name__ == "__main__":
             "default filename tags)"
         ),
     )
+    parser.add_argument(
+        "--edges",
+        choices=("boundary", "canny"),
+        default="boundary",
+        help=(
+            "edge extractor applied to the binary mask: the morphological "
+            "internal boundary (default, gradient-free) or Canny, kept for the "
+            "sensitivity analysis of the round-3 revision"
+        ),
+    )
     arguments = parser.parse_args()
     pin_compute_threads()
     import cibica.reproduction as reproduction
@@ -112,4 +122,5 @@ if __name__ == "__main__":
         supplementary=arguments.supplementary,
         n_jobs=arguments.jobs,
         output=output,
+        edges=arguments.edges,
     )

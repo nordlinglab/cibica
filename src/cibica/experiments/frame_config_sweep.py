@@ -24,6 +24,7 @@ from cibica.preprocessing import (
     preprocess_green_level,
     preprocess_median_filter,
 )
+from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS
 
 METHODS = ("CIBICA", "HOUGH", "RHT", "RCD", "QI")
 STOCHASTIC = frozenset({"CIBICA", "RHT", "RCD"})
@@ -50,6 +51,9 @@ class FrameConfigTask:
     x_ground_truth: float
     y_ground_truth: float
     r_ground_truth: float
+    #: Edge extractor for the binary mask: "boundary" (the study) or "canny"
+    #: (the sensitivity analysis).
+    edges: str = "boundary"
 
 
 def _estimate_once(
@@ -93,13 +97,13 @@ def _estimate_once(
         elif method == "RHT":
             if len(edgels) < 3:
                 return 0.0, 0.0, True
+            # Published algorithm, study-scale thresholds (study_config).
             circle = estimate(
                 edgels,
                 method="rht",
-                num_iterations=1000,
-                threshold=3,
                 rng=rng,
                 constraints=constraints,
+                **RHT_STUDY_PARAMS,
             )
         elif method == "RCD":
             if len(edgels) < 4:
@@ -107,12 +111,9 @@ def _estimate_once(
             circle = estimate(
                 edgels,
                 method="rcd",
-                num_iterations=1000,
-                distance_threshold=2,
-                min_inliers=5,
-                min_distance=5,
                 rng=rng,
                 constraints=constraints,
+                **RCD_STUDY_PARAMS,
             )
         elif method == "QI":
             if len(edgels) < 3:
@@ -162,11 +163,11 @@ def _run_cell(task: FrameConfigTask) -> CellResult:
     try:
         if task.config["green_level"] is not None:
             _, edge_image, edgels = preprocess_green_level(
-                black, task.config["green_level"]
+                black, task.config["green_level"], edges=task.edges
             )
         else:
             _, edge_image, edgels = preprocess_median_filter(
-                black, green, task.config["median_size"]
+                black, green, task.config["median_size"], edges=task.edges
             )
     except Exception:
         return task.image_index, task.config_index, None, None
@@ -211,8 +212,16 @@ def run_frame_config_sweep(
     seed: int | None = None,
     n_jobs: int = 1,
     on_progress: ProgressCallback | None = None,
+    edges: str = "boundary",
 ) -> dict[str, Any]:
-    """Compute all five estimators over every dataset frame and configuration."""
+    """Compute all five estimators over every dataset frame and configuration.
+
+    ``edges`` selects the extractor applied to every configuration's binary
+    mask: ``"boundary"`` (default) is the gradient-free internal boundary the
+    study reports, ``"canny"`` reruns the pipeline with the former Canny
+    detector for the sensitivity analysis. Everything downstream, HOUGH's
+    input edge image included, follows from that choice.
+    """
     if replicates < 1:
         raise ValueError("replicates must be at least 1")
 
@@ -236,6 +245,7 @@ def run_frame_config_sweep(
             x_ground_truth=float(ground_truth.iloc[image_index]["X"]),
             y_ground_truth=float(ground_truth.iloc[image_index]["Y"]),
             r_ground_truth=float(ground_truth.iloc[image_index]["R"]),
+            edges=edges,
         )
         for image_index in range(n_images)
         for config_index in range(n_configs)

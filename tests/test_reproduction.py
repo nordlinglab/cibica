@@ -228,8 +228,10 @@ def test_table6_triplet_sweep(sweep_result):
     rows, out = sweep_result
     assert set(rows) == {500, 1000, 2000, 5000, 10000}
     # CIBICA accuracy is high and essentially flat across triplet counts.
+    # With the internal-boundary edge extractor (2.2.0) the GL80 mean sits at
+    # 0.913-0.915 for every N; the Canny pipeline gave 0.89-0.90.
     for n, row in rows.items():
-        assert 0.88 <= row["mean_jaccard"] <= 0.91, f"N={n}"
+        assert 0.90 <= row["mean_jaccard"] <= 0.93, f"N={n}"
         assert abs(row["mean_diff_vs_max"]) < 0.02, f"N={n}"
     # Throughput drops as the triplet budget grows.
     assert rows[500]["fps"] > rows[10000]["fps"]
@@ -257,8 +259,10 @@ def test_table7_ablation(ablation_rows):
     no_ref = rows["No refinement"]
     no_con = rows["No consensus"]
 
-    # Full CIBICA reproduces the published best-3-GL Jaccard (~0.898).
-    assert 0.88 <= full["Mean"] <= 0.91
+    # Full CIBICA reproduces the reference-window Jaccard of the round-3
+    # study (~0.921 on GL70/GL72/GL74 with the boundary extractor; the
+    # Canny-era value on GL80-GL84 was ~0.898).
+    assert 0.90 <= full["Mean"] <= 0.94
 
     # Removing LS refinement is strongly and significantly worse (the paper's
     # headline ablation result): HL ~ +0.02, p < 0.001.

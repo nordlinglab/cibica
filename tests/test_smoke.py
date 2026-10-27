@@ -44,9 +44,13 @@ def test_public_api_present():
         "LS_circle",
         "HOUGH",
         "rht",
+        "rht_detect_all",
         "rcd",
+        "rcd_detect_all",
         "qi_2024",
         "image_to_edge_points",
+        "internal_boundary",
+        "extract_edges",
         "preprocess_green_level",
         "get_preprocessing_configs",
         "load_input",
@@ -269,8 +273,10 @@ def test_cli_method_help_documents_defaults_and_units(capsys):
         ["cibica", "missing.png", "--n-triplets", "0"],
         ["cibica", "missing.png", "--rmin", "31", "--rmax", "30"],
         ["hough", "missing.png", "--min-radius", "26", "--max-radius", "25"],
-        ["rht", "missing.png", "--iterations", "0"],
-        ["rcd", "missing.png", "--min-inliers", "0"],
+        ["rht", "missing.png", "--k-max", "0"],
+        ["rcd", "missing.png", "--t-min", "0"],
+        ["rcd", "missing.png", "--t-r", "0"],
+        ["qi", "missing.png", "--edges", "sobel"],
         ["qi", "missing.png", "--max-iterations", "0"],
         ["qi", "missing.png", "--jobs", "-1"],
         ["cibica", "missing.png", "--seed", "-1"],
@@ -329,7 +335,23 @@ def test_cli_hough_method_options(tmp_path):
 def test_cli_rht_method_options(tmp_path):
     img = tmp_path / "c.png"
     cv2.imwrite(str(img), _circle_image())
-    rc = cli.main(["rht", str(img), "--iterations", "1500", "--threshold", "3", "-q"])
+    rc = cli.main(
+        [
+            "rht",
+            str(img),
+            "--delta",
+            "2",
+            "--n-t",
+            "3",
+            "--k-max",
+            "15000",
+            "--d-tol",
+            "2",
+            "--m-min",
+            "10",
+            "-q",
+        ]
+    )
     assert rc == 0
 
 
@@ -340,18 +362,34 @@ def test_cli_rcd_method_options(tmp_path):
         [
             "rcd",
             str(img),
-            "--iterations",
-            "800",
-            "--distance-threshold",
-            "2",
-            "--min-inliers",
+            "--t-f",
+            "8000",
+            "--t-min",
             "5",
-            "--min-distance",
+            "--t-a",
             "10",
+            "--t-d",
+            "1",
+            "--t-r",
+            "0.5",
             "-q",
         ]
     )
     assert rc == 0
+
+
+def test_cli_help_shows_the_papers_parameter_names(capsys):
+    for method, options in (
+        ("rht", ("--delta", "--n-t", "--k-max", "--d-tol", "--m-min")),
+        ("rcd", ("--t-f", "--t-min", "--t-a", "--t-d", "--t-r")),
+    ):
+        with pytest.raises(SystemExit) as exc:
+            cli.main([method, "--help"])
+        assert exc.value.code == 0
+        output = capsys.readouterr().out
+        for option in options:
+            assert option in output
+        assert "--edges {boundary,canny}" in output
 
 
 def test_cli_qi_method_options(tmp_path):
@@ -572,16 +610,21 @@ def test_cli_output_creates_parent_directories(tmp_path, capsys):
     assert output.is_file()
 
 
-def test_rcd_default_min_distance_adapts_to_small_frames():
-    # On a ~22 px-diameter circle (typical black-sphere ROI) the former fixed
-    # default min_distance=20 made triplet acceptance nearly impossible, so
-    # rcd usually found nothing. The default must scale with the point cloud.
+def test_rcd_through_estimate_fits_small_frames_the_bare_function_declines():
+    """A ~22 px circle, the typical black-sphere ROI, needs the study thresholds.
+
+    ``cibica.rcd`` keeps the published Section III values, whose
+    ``T_a = 20`` px cannot be met by three points on a circle of diameter 22,
+    so it declines. ``cibica.estimate`` applies the study's thresholds
+    (``cibica.study_config.RCD_STUDY_PARAMS``) and fits the circle.
+    """
     pts = _noisy_circle_rowcol(row_c=16, col_c=16, r=11, n=60, noise=0.3)
+    _center, radius = cibica.rcd(pts, T_f=2000, rng=0)
+    assert cibica.is_no_circle(radius)
     for seed in range(5):
-        np.random.seed(seed)
-        _center, radius = cibica.rcd(pts)
-        assert radius is not None
-        assert not isinstance(radius, (int, np.integer)) and radius > 0, f"seed {seed}"
+        x, y, r = cibica.estimate(pts, method="rcd", seed=seed)
+        assert (x, y) == pytest.approx((16.0, 16.0), abs=1.5), f"seed {seed}"
+        assert r == pytest.approx(11.0, abs=1.5), f"seed {seed}"
 
 
 def test_cli_compare_raster_legend_below_image(tmp_path):

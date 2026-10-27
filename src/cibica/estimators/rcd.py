@@ -1,272 +1,294 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""RCD: randomized circle detection.
+"""RCD: Randomized Circle Detection.
 
 Original method:
     Chen, T.-C., & Chung, K.-L. (2001). An efficient randomized algorithm for
     detecting circles. Computer Vision and Image Understanding, 83(2), 172-191.
     https://doi.org/10.1006/cviu.2001.0923
 
-Randomly samples four edge points, fits a candidate circle from three of them,
-validates it against the fourth, and counts inliers within a distance
-threshold; the best-supported candidate is returned. A minimum separation
-between sampled points is required for numerical stability.
+Implements the six-step RCD algorithm of the paper. Four edge pixels are
+sampled (Step 2). If three of them, the agent pixels, are pairwise farther
+apart than ``T_a`` and define a circle whose boundary passes within ``T_d``
+of the fourth, the four are co-circular and the circle is a *possible circle*
+(Step 3, Section II.B); only then is the evidence-collecting pass over the
+edge set run (Step 4). A possible circle is a true circle when the number of
+edge pixels on it reaches the circumference-normalised ratio test
+``n_p >= 2*pi*r*T_r`` (Step 5, Section II.C), after which its pixels leave
+the edge set (Step 6). Termination is by a counter of consecutive failures
+(``T_f``) or by the edge set shrinking below ``T_min``, not by a fixed
+iteration budget. The RANSAC-style inlier-count selection this module
+replaced in cibica 2.2.0 had neither the fourth-point test nor the
+normalised acceptance.
 
-Main function: rcd(edgels, **kwargs)
+Two readings of the printed text are fixed here:
+
+- Step 3 prints that a candidate is formed when the distance of the fourth
+  pixel to the possible circle is "larger than T_d", which contradicts the
+  co-circularity definition of Section II.B (``d <= T_d``); the definition is
+  followed.
+- The printed steps do not say whether the four sampled pixels return to the
+  edge set when a candidate fails the ratio test. They are returned, since
+  otherwise the edge set would empty after a few hundred failures.
+
+:func:`rcd` returns the first accepted circle; Step 6 only prepares the search
+for further circles, so it cannot change the first detection, and
+:func:`rcd_detect_all` runs it.
+
+The paper's experimental thresholds (Section III) are the defaults: T_f =
+30000, T_min = 60, T_a = 20, T_d = 1, T_r = 0.60 (astronomy image: T_a = 10,
+T_r = 0.45; the more complicated toy image: T_f = 60000).
+
+Main functions: ``rcd(edgels, **kwargs)`` and ``rcd_detect_all(edgels, **kwargs)``.
 """
+
+from __future__ import annotations
 
 import numpy as np
 
 from cibica._constraints import Constraints, report_active, reporting_enabled
-from cibica._rng import random_subsets, resolve_rng
+from cibica._rng import resolve_rng
 from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
 
+__all__ = ["rcd", "rcd_detect_all"]
 
-def _distance(p1, p2):
+#: ``(a, b, r)`` in the coordinate order of the input points.
+_Params = tuple[float, float, float]
+
+#: The four leave-one-out triplets in the paper's order: C_123 with v4 as the
+#: fourth pixel, then C_124/v3, C_134/v2, C_234/v1 (Section II.B).
+_TRIPLETS = ((0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 3, 1), (1, 2, 3, 0))
+
+
+def _circle_through(p1, p2, p3) -> _Params | None:
+    """Circle through three points via Cramer's rule (paper eqs. 4-6).
+
+    Args:
+        p1: First agent pixel as ``(row, col)``.
+        p2: Second agent pixel.
+        p3: Third agent pixel.
+
+    Returns:
+        ``(a, b, r)`` in the input coordinate order, or ``None`` when the
+        points are collinear (the determinant of eq. 3 vanishes).
     """
-    Calculate Euclidean distance between two points.
+    x1, y1 = p1
+    x2, y2 = p2
+    x3, y3 = p3
+    det = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+    if abs(det) < 1e-12:
+        return None
+    q2 = x2**2 + y2**2 - (x1**2 + y1**2)
+    q3 = x3**2 + y3**2 - (x1**2 + y1**2)
+    a = (q2 * (y3 - y1) - q3 * (y2 - y1)) / (2.0 * det)
+    b = ((x2 - x1) * q3 - (x3 - x1) * q2) / (2.0 * det)
+    r = float(np.sqrt((x1 - a) ** 2 + (y1 - b) ** 2))
+    return float(a), float(b), r
 
-    Parameters
-    ----------
-    p1, p2 : array-like
-        Points of shape (2,) containing (x, y) coordinates
 
-    Returns
-    -------
-    float
-        Euclidean distance between the points
+def _possible_circle(quad: np.ndarray, T_a: float, T_d: float) -> _Params | None:
+    """Step 3: the first co-circular triplet-plus-fourth among the four pixels."""
+    for i, j, k, fourth in _TRIPLETS:
+        pi, pj, pk, pl = quad[i], quad[j], quad[k], quad[fourth]
+        if (
+            np.hypot(*(pi - pj)) <= T_a
+            or np.hypot(*(pj - pk)) <= T_a
+            or np.hypot(*(pk - pi)) <= T_a
+        ):
+            continue
+        circle = _circle_through(pi, pj, pk)
+        if circle is None:
+            continue
+        a, b, r = circle
+        if abs(np.hypot(pl[0] - a, pl[1] - b) - r) <= T_d:
+            return a, b, r
+    return None
+
+
+def _search(
+    edgels,
+    T_f: int,
+    T_min: int,
+    T_a: float,
+    T_d: float,
+    T_r: float,
+    rng,
+    cons: Constraints,
+    max_circles: int | None,
+) -> tuple[list[_Params], _Params | None]:
+    """Run Steps 1-6 and return the accepted circles in detection order.
+
+    Also returns the first circle that passed Step 5 but was rejected by
+    ``cons`` before any circle was accepted, which is what an unconstrained
+    search would have returned; ``None`` when the bounds did not change the
+    first detection.
     """
-    return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+    generator = resolve_rng(rng)
+    points = np.asarray(edgels, dtype=float)
+    accepted: list[_Params] = []
+    first_rejected: _Params | None = None
+    active = np.ones(len(points), dtype=bool)
+    f = 0
+    while f < T_f and int(active.sum()) >= max(T_min, 4):
+        # Step 2: pick four pixels out of V; they are under test, not removed.
+        pool = np.flatnonzero(active)
+        pick = generator.choice(pool, size=4, replace=False)
+        possible = _possible_circle(points[pick], T_a, T_d)
+        if possible is None:
+            f += 1
+            continue
+
+        # Step 4: evidence collection over V without the four under test.
+        a, b, r = possible
+        rest = pool[~np.isin(pool, pick)]
+        distances = np.abs(np.hypot(points[rest, 0] - a, points[rest, 1] - b) - r)
+        members = rest[distances <= T_d]
+
+        # Step 5: circumference-normalised ratio test.
+        if len(members) < 2.0 * np.pi * r * T_r:
+            f += 1  # a false circle; its members and the four stay in V
+            continue
+
+        # Step 6: a true circle. The bounds are cibica's selection layer on
+        # top of the published rule: a detection outside them is treated like
+        # any other detection, its pixels leave V and the failure counter
+        # resets, so the search moves on to the next circle instead of
+        # re-detecting this one. The centre is (a, b) = (row, col), so x = b
+        # and y = a for the bounds.
+        if cons.accepts(b, a, r):
+            accepted.append((a, b, r))
+            if max_circles is not None and len(accepted) >= max_circles:
+                break
+        elif not accepted and first_rejected is None:
+            first_rejected = (a, b, r)
+        active[members] = False
+        active[pick] = False
+        f = 0
+    return accepted, first_rejected
 
 
-def _circle_from_points(p1, p2, p3):
-    """
-    Calculate circle parameters from three points.
-
-    Uses the determinant method to find the unique circle passing through
-    three non-collinear points.
-
-    Parameters
-    ----------
-    p1, p2, p3 : array-like
-        Points of shape (2,) containing (x, y) coordinates
-
-    Returns
-    -------
-    center : numpy.ndarray or None
-        Circle center (cx, cy), or None if points are collinear
-    radius : float or None
-        Circle radius, or None if points are collinear
-    """
-    temp = p2[0] ** 2 + p2[1] ** 2
-    bc = (p1[0] ** 2 + p1[1] ** 2 - temp) / 2
-    cd = (temp - p3[0] ** 2 - p3[1] ** 2) / 2
-    det = (p1[0] - p2[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p2[1])
-
-    # Check if points are collinear
-    if abs(det) < 1.0e-6:
-        return None, None
-
-    # Calculate center
-    cx = (bc * (p2[1] - p3[1]) - cd * (p1[1] - p2[1])) / det
-    cy = ((p1[0] - p2[0]) * cd - (p2[0] - p3[0]) * bc) / det
-    center = np.array([cx, cy])
-
-    # Calculate radius as mean distance from center to the three points
-    radius = np.mean(
-        [_distance(center, p1), _distance(center, p2), _distance(center, p3)]
+def _report(
+    method: str,
+    cons: Constraints,
+    accepted: list[_Params],
+    first_rejected: _Params | None,
+) -> None:
+    """Say on stderr when a bound changed the first detection, if enabled."""
+    if first_rejected is None or cons.is_empty or not reporting_enabled():
+        return
+    a, b, r = first_rejected
+    free_xyr = (b, a, r)
+    best_xyr = (
+        None if not accepted else (accepted[0][1], accepted[0][0], accepted[0][2])
     )
+    violated = cons.violation(*free_xyr)
+    if violated is not None:
+        report_active(method, violated, best_xyr, free_xyr)
 
-    return center, radius
+
+def rcd_detect_all(
+    edgels,
+    T_f: int = 30000,
+    T_min: int = 60,
+    T_a: float = 20.0,
+    T_d: float = 1.0,
+    T_r: float = 0.60,
+    rng=None,
+    constraints: Constraints | None = None,
+    max_circles: int | None = None,
+) -> list[tuple[np.ndarray, float]]:
+    """Detect circles with the full RCD procedure (Chen & Chung 2001, Steps 1-6).
+
+    Args:
+        edgels: Edge points of shape ``(n, 2)`` as ``[[row, col], ...]``.
+        T_f: Failure tolerance: the search stops after ``T_f`` consecutive
+            failures (Step 2).
+        T_min: Minimum number of pixels left in the edge set for detection to
+            continue (Step 2).
+        T_a: Minimum pairwise separation of the three agent pixels, in pixels
+            (Step 3).
+        T_d: Distance threshold, in pixels: the co-circularity gate for the
+            fourth pixel and the membership band for evidence collection
+            (Sections II.B-II.C).
+        T_r: Ratio threshold of the normalised test ``n_p >= 2*pi*r*T_r``.
+        rng: Source of randomness: a ``numpy.random.Generator``, an integer
+            seed, or ``None`` to derive one from the global NumPy stream.
+        constraints: Radius and centre bounds a detection must satisfy.
+            ``None`` (default) accepts every detection. A detection outside
+            the bounds is not returned; its pixels still leave the edge set,
+            so the search proceeds to the next circle. When a bound changes
+            the first detection, that is reported on stderr if reporting is
+            enabled.
+        max_circles: Stop after this many accepted circles; ``None`` runs the
+            search to ``T_f`` failures or ``T_min`` pixels.
+
+    Returns:
+        One ``([x_col, y_row], r)`` pair per accepted circle, in detection
+        order; an empty list when nothing is detected.
+
+    Notes:
+        Every default is the paper's Section III value, ``T_min = 60``
+        included, so an input with fewer edge points is declined. For regions
+        of interest about 50 px across,
+        :data:`cibica.study_config.RCD_STUDY_PARAMS` holds the thresholds of
+        the companion study, which :func:`cibica.estimate` applies by default.
+    """
+    cons = constraints if constraints is not None else Constraints()
+    accepted, first_rejected = _search(
+        edgels, T_f, T_min, T_a, T_d, T_r, rng, cons, max_circles
+    )
+    _report("RCD", cons, accepted, first_rejected)
+    return [(np.array([b, a]), float(r)) for a, b, r in accepted]
 
 
 def rcd(
     edgels,
-    num_iterations=1000,
-    distance_threshold=2,
-    min_inliers=10,
-    min_distance=None,
+    T_f: int = 30000,
+    T_min: int = 60,
+    T_a: float = 20.0,
+    T_d: float = 1.0,
+    T_r: float = 0.60,
     rng=None,
-    constraints=None,
-):
+    constraints: Constraints | None = None,
+) -> tuple[np.ndarray, float]:
+    """Fit one circle to edge points with Randomized Circle Detection.
+
+    The single-circle form of :func:`rcd_detect_all`: the first circle that
+    passes the ratio test of Step 5 (and the optional bounds) is returned.
+
+    Args:
+        edgels: Edge points of shape ``(n, 2)`` as ``[[row, col], ...]``.
+        T_f: Consecutive failures before giving up (default 30000).
+        T_min: Minimum edge points for the search to run (default 60).
+        T_a: Minimum agent-pixel separation in pixels (default 20).
+        T_d: Distance threshold in pixels (default 1).
+        T_r: Ratio threshold of the normalised acceptance test (default 0.60).
+        rng: ``numpy.random.Generator``, integer seed, or ``None``.
+        constraints: Optional :class:`cibica.Constraints`; see
+            :func:`rcd_detect_all`.
+
+    Returns:
+        The centre as ``[x_col, y_row]`` and the radius. Returns
+        (``[nan, nan]``, ``nan``) when no circle passes the ratio test within
+        ``T_f`` failures or fewer than ``T_min`` edge points are given; test
+        it with :func:`cibica.is_no_circle`.
+
+    Examples:
+        >>> theta = np.linspace(0, 2 * np.pi, 400)
+        >>> edgels = np.column_stack([80 + 60 * np.sin(theta), 80 + 60 * np.cos(theta)])
+        >>> center, radius = rcd(edgels, rng=0)
     """
-    Fit a circle to edge points using RANSAC with Distance Constraints.
-
-    This algorithm extends RANSAC by:
-    1. Sampling 4 points instead of 3
-    2. Trying all 4 possible triplet combinations from the 4 points
-    3. Requiring minimum separation between sampled points
-    4. Selecting the circle with most inliers above a minimum threshold
-
-    The additional constraints help avoid degenerate configurations and
-    improve robustness in cluttered environments.
-
-    Algorithm steps:
-    1. Randomly sample 4 points
-    2. For each of 4 possible triplets from these points:
-       a. Check if points are sufficiently separated
-       b. Fit circle to the triplet
-       c. Count inliers within distance_threshold
-    3. Keep best circle with most inliers (if above min_inliers)
-    4. Repeat for num_iterations
-
-    Parameters
-    ----------
-    edgels : numpy.ndarray
-        Array of shape (n, 2) containing (x, y) coordinates of edge points
-    num_iterations : int, optional
-        Number of RANSAC iterations (default: 1000)
-    distance_threshold : float, optional
-        Maximum distance for a point to be considered an inlier (default: 2)
-    min_inliers : int, optional
-        Minimum number of inliers required for a valid circle (default: 10)
-    min_distance : float, optional
-        Minimum required separation between sampled points. Defaults to
-        40% of the larger edgel extent, capped at 20 pixels, so triplet
-        acceptance stays geometrically feasible on small point clouds
-        (three points pairwise >= 20 apart cannot exist on a circle of
-        diameter < ~23). This prevents degenerate configurations from
-        clustered points; pass an explicit value to override.
-    rng : numpy.random.Generator, int, or None, optional
-        Source of randomness for point sampling. Pass an explicit generator
-        when calling from worker processes; ``None`` derives one from the
-        global NumPy stream.
-    constraints : cibica.Constraints, optional
-        Radius and centre bounds a candidate must satisfy. ``None`` (default)
-        searches unbounded, which is the historical behaviour. When a bound
-        discards what would otherwise have won, that is reported on stderr if
-        reporting is enabled.
-
-    Returns
-    -------
-    center : numpy.ndarray
-        Array ``[x_col, y_row]`` of circle center coordinates
-    radius : float
-        Circle radius
-
-    Notes
-    -----
-    Returns (``[nan, nan]``, ``nan``) if no valid circle is found;
-    test it with :func:`cibica.is_no_circle`.
-
-    The algorithm tries 4*num_iterations triplet fits (4 triplets per iteration),
-    making it more thorough than standard RANSAC but also ~4x slower.
-
-    The min_distance constraint is particularly useful when:
-    - Points are clustered in groups
-    - Image has multiple overlapping structures
-    - Noise creates tight clusters of false edges
-
-    Recommended parameter ranges:
-    - distance_threshold: 1-5 pixels (depends on noise level)
-    - min_inliers: 5-20 (depends on expected arc length)
-    - min_distance: 10-50 pixels (depends on expected radius)
-
-    Examples
-    --------
-    >>> theta = np.linspace(0, 2*np.pi, 100)
-    >>> edgels = np.column_stack([50 + 20*np.cos(theta), 50 + 20*np.sin(theta)])
-    >>> center, radius = rcd(edgels, num_iterations=500, distance_threshold=3)
-    >>> print(f"Center: {center}, Radius: {radius:.2f}")
-    """
-    # Input validation
-    if len(edgels) < 4:
-        return NO_CIRCLE_CENTER(), NO_RADIUS
-
-    if min_distance is None:
-        # Scale the separation requirement to the data (docstring: "depends
-        # on expected radius"); a fixed 20 px is infeasible on small clouds.
-        span = max(np.ptp(edgels[:, 0]), np.ptp(edgels[:, 1]))
-        min_distance = min(20.0, 0.4 * float(span))
-
-    cons = constraints if constraints is not None else Constraints()
-    report = reporting_enabled() and not cons.is_empty
-
-    quads = random_subsets(resolve_rng(rng), edgels.shape[0], 4, num_iterations)
-    samples = edgels[quads]
-    leave_one_out = np.array(
-        [[1, 2, 3], [0, 2, 3], [0, 1, 3], [0, 1, 2]],
-        dtype=np.int64,
+    detected = rcd_detect_all(
+        edgels,
+        T_f=T_f,
+        T_min=T_min,
+        T_a=T_a,
+        T_d=T_d,
+        T_r=T_r,
+        rng=rng,
+        constraints=constraints,
+        max_circles=1,
     )
-    triplets = samples[:, leave_one_out, :].reshape(-1, 3, 2)
-    p1, p2, p3 = triplets[:, 0], triplets[:, 1], triplets[:, 2]
-
-    pairwise = np.column_stack(
-        (
-            np.linalg.norm(p1 - p2, axis=1),
-            np.linalg.norm(p2 - p3, axis=1),
-            np.linalg.norm(p3 - p1, axis=1),
-        )
-    )
-    valid = np.all(pairwise > min_distance, axis=1)
-
-    temp = np.sum(p2**2, axis=1)
-    bc = (np.sum(p1**2, axis=1) - temp) / 2
-    cd = (temp - np.sum(p3**2, axis=1)) / 2
-    det = (p1[:, 0] - p2[:, 0]) * (p2[:, 1] - p3[:, 1])
-    det -= (p2[:, 0] - p3[:, 0]) * (p1[:, 1] - p2[:, 1])
-    valid &= np.abs(det) >= 1.0e-6
-
-    centers = np.full((triplets.shape[0], 2), np.nan)
-    centers[valid, 0] = (
-        bc[valid] * (p2[valid, 1] - p3[valid, 1])
-        - cd[valid] * (p1[valid, 1] - p2[valid, 1])
-    ) / det[valid]
-    centers[valid, 1] = (
-        (p1[valid, 0] - p2[valid, 0]) * cd[valid]
-        - (p2[valid, 0] - p3[valid, 0]) * bc[valid]
-    ) / det[valid]
-    radii = np.mean(np.linalg.norm(triplets - centers[:, None, :], axis=2), axis=1)
-
-    inlier_counts = np.full(triplets.shape[0], -1, dtype=np.int64)
-    candidate_indices = np.flatnonzero(valid)
-    for start in range(0, candidate_indices.size, 256):
-        indices = candidate_indices[start : start + 256]
-        distances = np.linalg.norm(
-            edgels[None, :, :] - centers[indices, None, :], axis=2
-        )
-        inlier_counts[indices] = np.sum(
-            np.abs(distances - radii[indices, None]) < distance_threshold,
-            axis=1,
-        )
-
-    eligible = valid & (inlier_counts >= min_inliers)
-    free_circle = None
-    if eligible.any():
-        free_scores = np.where(eligible, inlier_counts, -1)
-        free_index = int(np.argmax(free_scores))
-        free_circle = centers[free_index], radii[free_index]
-
-    accepted = np.zeros(triplets.shape[0], dtype=bool)
-    for index in np.flatnonzero(eligible):
-        accepted[index] = cons.accepts(
-            centers[index, 1], centers[index, 0], radii[index]
-        )
-    best_circle = None
-    if accepted.any():
-        accepted_scores = np.where(accepted, inlier_counts, -1)
-        best_index = int(np.argmax(accepted_scores))
-        best_circle = centers[best_index], radii[best_index]
-
-    if report and free_circle is not None:
-        free_xyr = (free_circle[0][1], free_circle[0][0], free_circle[1])
-        best_xyr = (
-            None
-            if best_circle is None
-            else (best_circle[0][1], best_circle[0][0], best_circle[1])
-        )
-        # Compare by value: the two tuples hold arrays, so identity would
-        # report every call, and an equal-valued winner is not an activation.
-        violated = cons.violation(*free_xyr)
-        if violated is not None and (
-            best_xyr is None or not np.allclose(best_xyr, free_xyr)
-        ):
-            report_active("RCD", violated, best_xyr, free_xyr)
-
-    # Return best circle found
-    if best_circle is None:
+    if not detected:
         return NO_CIRCLE_CENTER(), NO_RADIUS
-
-    # Swapped here so every estimator returns (x=col, y=row); the algorithm
-    # works in the (row, col) order of the input points.
-    return np.array([best_circle[0][1], best_circle[0][0]]), float(best_circle[1])
+    return detected[0]

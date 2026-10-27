@@ -37,6 +37,7 @@ def run_method(args: argparse.Namespace) -> int:
             seed=args.seed,
             preprocess=args.preprocess,
             green_ref=green_ref,
+            edges=args.edges,
             **kwargs,
         )
         circles = [cast(Circle, estimated)] if single else cast(list[Circle], estimated)

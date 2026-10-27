@@ -23,6 +23,7 @@ from pathlib import Path
 from cibica._cli_types import nonnegative_int
 from cibica.cli._output import DATA_SUFFIXES
 from cibica.io import IMAGE_SUFFIXES, OVERLAY_VECTOR_SUFFIXES, POINTS_SUFFIXES
+from cibica.preprocessing import EDGE_EXTRACTORS
 
 # Translate CLI flags to each estimator's keyword arguments.
 METHOD_KWARGS = {
@@ -46,18 +47,26 @@ METHOD_KWARGS = {
         )
         if v is not None
     },
+    # Both randomised baselines expose their papers' parameter names.
     "rht": lambda a: {
         k: v
-        for k, v in (("num_iterations", a.iterations), ("threshold", a.threshold))
+        for k, v in (
+            ("delta", a.delta),
+            ("n_t", a.n_t),
+            ("k_max", a.k_max),
+            ("d_tol", a.d_tol),
+            ("m_min", a.m_min),
+        )
         if v is not None
     },
     "rcd": lambda a: {
         k: v
         for k, v in (
-            ("num_iterations", a.iterations),
-            ("distance_threshold", a.distance_threshold),
-            ("min_inliers", a.min_inliers),
-            ("min_distance", a.min_distance),
+            ("T_f", a.t_f),
+            ("T_min", a.t_min),
+            ("T_a", a.t_a),
+            ("T_d", a.t_d),
+            ("T_r", a.t_r),
         )
         if v is not None
     },
@@ -88,6 +97,14 @@ def add_common_options(p: argparse.ArgumentParser) -> None:
         choices=["canny", "green_level", "median_filter"],
         default="canny",
         help="image-to-edge-points strategy; ignored for hough and edge-point input",
+    )
+    p.add_argument(
+        "--edges",
+        choices=list(EDGE_EXTRACTORS),
+        default="boundary",
+        help="edge extractor for the binary mask of green_level and "
+        "median_filter: the gradient-free morphological internal boundary, or "
+        "Canny for the sensitivity analysis; ignored otherwise",
     )
     p.add_argument(
         "--green-ref",

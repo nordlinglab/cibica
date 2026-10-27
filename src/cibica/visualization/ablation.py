@@ -17,7 +17,7 @@ def cibica_no_consensus(*args, **kwargs):
 def run_ablation_study(
     data_dir,
     n_triplets=500,
-    ref_configs=("GL80", "GL82", "GL84"),
+    ref_configs=("GL70", "GL72", "GL74"),
     table_dir=".",
     date_tag="",
     progress=print,

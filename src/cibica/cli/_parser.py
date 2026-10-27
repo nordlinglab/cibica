@@ -31,6 +31,7 @@ from cibica.figure_defaults import (
     JACCARD_DISTRIBUTION_YLABEL_LEFT,
     JACCARD_DISTRIBUTION_YLABEL_RIGHT,
 )
+from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS
 
 
 def _add_cibica(sub) -> None:
@@ -104,65 +105,102 @@ def _add_hough(sub) -> None:
 
 
 def _add_rht(sub) -> None:
+    # Defaults are the study's thresholds for ~50 px regions of interest
+    # (cibica.study_config.RHT_STUDY_PARAMS), which cibica.estimate applies;
+    # the library function cibica.rht keeps the published defaults.
     p = sub.add_parser(
         "rht",
-        help="Randomized Hough Transform (Xu et al. 1990)",
+        help="Randomized Hough Transform (Xu et al. 1990, Steps 1-9)",
         formatter_class=DefaultsHelpFormatter,
     )
     add_common_options(p)
     p.add_argument(
-        "--iterations",
-        type=positive_int,
-        default=1000,
-        metavar="N",
-        help="maximum random triplets to evaluate",
+        "--delta",
+        type=nonnegative_float,
+        default=RHT_STUDY_PARAMS["delta"],
+        metavar="TOL",
+        help="parameter-space tolerance within which a sampled (a, b, r) "
+        "merges into an existing cell (Step 4); 0 is the paper's highest "
+        "resolution",
     )
     p.add_argument(
-        "--threshold",
-        type=positive_float,
-        default=5,
+        "--n-t",
+        type=positive_int,
+        default=int(RHT_STUDY_PARAMS["n_t"]),
+        metavar="N",
+        help="cell score at which it becomes a candidate (Step 6; the paper "
+        "suggests 2-3)",
+    )
+    p.add_argument(
+        "--k-max",
+        type=positive_int,
+        default=int(RHT_STUDY_PARAMS["k_max"]),
+        metavar="N",
+        help="maximum random triplets before giving up (Step 7)",
+    )
+    p.add_argument(
+        "--d-tol",
+        type=nonnegative_float,
+        default=RHT_STUDY_PARAMS["d_tol"],
         metavar="PX",
-        help="maximum point-to-circle distance counted as an inlier",
+        help="band within which an edge point lies on a candidate circle (Step 8)",
+    )
+    p.add_argument(
+        "--m-min",
+        type=nonnegative_int,
+        default=int(RHT_STUDY_PARAMS["m_min"]),
+        metavar="N",
+        help="a candidate is a circle when more than this many edge points lie "
+        "on it (Step 8)",
     )
 
 
 def _add_rcd(sub) -> None:
+    # Defaults are the study's thresholds for ~50 px regions of interest
+    # (cibica.study_config.RCD_STUDY_PARAMS), which cibica.estimate applies;
+    # the library function cibica.rcd keeps the published defaults.
     p = sub.add_parser(
         "rcd",
-        help="Randomized Circle Detection (Chen & Chung 2001)",
+        help="Randomized Circle Detection (Chen & Chung 2001, Steps 1-6)",
         formatter_class=DefaultsHelpFormatter,
     )
     add_common_options(p)
     p.add_argument(
-        "--iterations",
+        "--t-f",
         type=positive_int,
-        default=1000,
+        default=int(RCD_STUDY_PARAMS["T_f"]),
         metavar="N",
-        help="number of random four-point samples",
+        help="consecutive failures before giving up (T_f)",
     )
     p.add_argument(
-        "--distance-threshold",
-        type=positive_float,
-        default=2,
-        metavar="PX",
-        help="maximum point-to-circle distance counted as an inlier",
-    )
-    p.add_argument(
-        "--min-inliers",
+        "--t-min",
         type=positive_int,
-        default=10,
+        default=int(RCD_STUDY_PARAMS["T_min"]),
         metavar="N",
-        help="minimum supporting edge points required for a circle",
+        help="minimum edge points left for the search to continue (T_min)",
     )
     p.add_argument(
-        "--min-distance",
+        "--t-a",
         type=nonnegative_float,
-        default=None,
+        default=RCD_STUDY_PARAMS["T_a"],
         metavar="PX",
-        help=(
-            "minimum separation between sampled points in pixels; omitted uses "
-            "40%% of the point-cloud span, capped at 20 px"
-        ),
+        help="minimum pairwise separation of the three agent pixels (T_a)",
+    )
+    p.add_argument(
+        "--t-d",
+        type=nonnegative_float,
+        default=RCD_STUDY_PARAMS["T_d"],
+        metavar="PX",
+        help="distance threshold of the fourth-pixel test and of evidence "
+        "collection (T_d)",
+    )
+    p.add_argument(
+        "--t-r",
+        type=positive_float,
+        default=RCD_STUDY_PARAMS["T_r"],
+        metavar="RATIO",
+        help="a possible circle is accepted when at least 2*pi*r*T_r edge "
+        "points lie on it (T_r)",
     )
 
 

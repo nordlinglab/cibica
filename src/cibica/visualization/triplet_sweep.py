@@ -67,7 +67,7 @@ def run_triplet_sweep(
     data_dir,
     runs=1,
     n_triplets_list=(500, 1000, 2000, 5000, 10000),
-    config_name="GL80",
+    config_name="GL72",
     table_dir=".",
     fig_dir=".",
     date_tag="",

@@ -229,9 +229,18 @@ class TestConstraints:
         pts = np.column_stack([20 + 11 * np.sin(t), 20 + 11 * np.cos(t)])
         tight = Constraints(rmin=0, rmax=6)
         for fn in (
-            lambda c: rht(pts, 1000, 3, rng=np.random.default_rng(1), constraints=c),
+            lambda c: rht(
+                pts, d_tol=2.0, m_min=5, rng=np.random.default_rng(1), constraints=c
+            ),
             lambda c: rcd(
-                pts, 1000, 2, 5, 5, rng=np.random.default_rng(1), constraints=c
+                pts,
+                T_f=2000,
+                T_min=4,
+                T_a=12.0,
+                T_d=1.0,
+                T_r=0.5,
+                rng=np.random.default_rng(1),
+                constraints=c,
             ),
         ):
             _, free_r = fn(None)

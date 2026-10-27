@@ -155,7 +155,7 @@ def _score_against_baseline(
 def score_cibica_vs_hough(
     data_dir: str | Path,
     ground_truth: pd.DataFrame | None = None,
-    config_name: str = "GL80",
+    config_name: str = "GL72",
     seed: int | None = 42,
     *,
     n_jobs: int = 1,
@@ -180,7 +180,7 @@ def score_cibica_vs_hough(
 def score_cibica_vs_qi(
     data_dir: str | Path,
     ground_truth: pd.DataFrame | None = None,
-    config_name: str = "GL82",
+    config_name: str = "GL72",
     seed: int | None = 42,
     *,
     n_jobs: int = 1,

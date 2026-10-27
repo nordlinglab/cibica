@@ -20,19 +20,25 @@ from cibica.analysis.wilcoxon_signed_rank import wilcoxon_signed_rank
 from cibica.study_config import BEST_GL, METHODS
 
 
-def reference_config_indices(results) -> list[int]:
-    """Column positions of the reference green-level configurations."""
+def reference_config_indices(results, configs=None) -> list[int]:
+    """Column positions of the reference green-level configurations.
+
+    ``configs`` defaults to :data:`cibica.study_config.BEST_GL`, the window of
+    the default edge extractor; pass :func:`cibica.study_config.reference_window`
+    for another extractor.
+    """
     cfg_names = results["config_names"]
-    return [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    return [cfg_names.index(gl) for gl in (configs or BEST_GL) if gl in cfg_names]
 
 
-def reference_scores(results) -> dict[str, np.ndarray]:
+def reference_scores(results, configs=None) -> dict[str, np.ndarray]:
     """Per-image mean Jaccard over the reference green levels, per method.
 
     This is the unit of analysis for every paired test in the manuscript: one
-    score per frame, averaged over GL80/GL82/GL84.
+    score per frame, averaged over the reference window (``configs``, default
+    :data:`cibica.study_config.BEST_GL`).
     """
-    best_idx = reference_config_indices(results)
+    best_idx = reference_config_indices(results, configs)
     return {
         method: results[f"Jaccard_{method}"][:, best_idx].mean(axis=1)
         for method in METHODS
@@ -74,7 +80,7 @@ def best_config_stats(results, method: str) -> dict:
     }
 
 
-def compute_focal_stats(results, focal: str = "CIBICA") -> list[dict]:
+def compute_focal_stats(results, focal: str = "CIBICA", configs=None) -> list[dict]:
     """Wilcoxon + HL + 95% CI + r_rb for ``focal`` against each baseline.
 
     Scores are the per-image means over the reference green levels.
@@ -86,7 +92,7 @@ def compute_focal_stats(results, focal: str = "CIBICA") -> list[dict]:
     ``W_plus`` is the statistic the manuscript quotes, and ``r_rb`` is derived
     from it so its sign matches the direction of the effect.
     """
-    scores = reference_scores(results)
+    scores = reference_scores(results, configs)
     focal_s = scores[focal]
     rows = []
     for method in METHODS:
@@ -140,9 +146,9 @@ def compute_focal_stats(results, focal: str = "CIBICA") -> list[dict]:
     return rows
 
 
-def pairwise_comparisons(results) -> list[dict]:
+def pairwise_comparisons(results, configs=None) -> list[dict]:
     """Two-sided Wilcoxon comparison of every unordered pair of methods."""
-    scores = reference_scores(results)
+    scores = reference_scores(results, configs)
     pairs = [(a, b) for i, a in enumerate(METHODS) for b in METHODS[i + 1 :]]
     rows = []
     for a, b in pairs:

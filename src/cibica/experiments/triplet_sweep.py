@@ -122,7 +122,7 @@ def run_triplet_sweep(
     *,
     runs: int = 1,
     n_triplets_list: Sequence[int] = DEFAULT_N_TRIPLETS,
-    config_name: str = "GL80",
+    config_name: str = "GL72",
     seed: int | None = None,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,

@@ -56,13 +56,15 @@ def preprocessing_throughput(
     repeats: int = 1,
     limit: int | None = None,
     warmup: bool = True,
+    edges: str = "boundary",
 ) -> dict:
     """Time all preprocessing configurations over the selected frames.
 
     The measurement is single-threaded by construction; see the module
     docstring for why it must stay that way and run first. ``warmup`` runs one
     unmeasured pass so the reported time excludes first-touch page faults and
-    OpenCV's lazy kernel initialisation.
+    OpenCV's lazy kernel initialisation. ``edges`` selects the mask's edge
+    extractor (``"boundary"`` or ``"canny"``), as in the frame sweep.
     """
     if repeats <= 0:
         raise ValueError("repeats must be positive")
@@ -73,9 +75,11 @@ def preprocessing_throughput(
         for black, green in frames:
             for config in configs:
                 if config["green_level"] is not None:
-                    preprocess_green_level(black, config["green_level"])
+                    preprocess_green_level(black, config["green_level"], edges=edges)
                 else:
-                    preprocess_median_filter(black, green, config["median_size"])
+                    preprocess_median_filter(
+                        black, green, config["median_size"], edges=edges
+                    )
 
     if warmup:
         one_pass()

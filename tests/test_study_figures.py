@@ -91,8 +91,8 @@ def test_figs6_jaccard_distance_written(sweep_results, tmp_path):
 
 
 def test_fig13_violin_written_for_a_single_config(sweep_results, tmp_path):
-    plot_violin(sweep_results, "GL82", [2], output_dir=tmp_path)
-    assert _both_formats(tmp_path, "Fig13_Violin_GL82")
+    plot_violin(sweep_results, "GL72", [1], output_dir=tmp_path)
+    assert _both_formats(tmp_path, "Fig13_Violin_GL72")
 
 
 def test_figs2_violin_written_for_the_reference_configs(sweep_results, tmp_path):

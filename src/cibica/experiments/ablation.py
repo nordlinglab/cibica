@@ -22,8 +22,9 @@ from cibica.analysis.robust_statistics import (
 from cibica.estimate import _estimate_cibica_no_consensus, estimate
 from cibica.parallel import map_tasks, task_rng
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
+from cibica.study_config import BEST_GL
 
-DEFAULT_REF_CONFIGS = ("GL80", "GL82", "GL84")
+DEFAULT_REF_CONFIGS = BEST_GL
 VARIANTS = ("full", "no_refinement", "no_consensus")
 VARIANT_LABELS = {
     "full": "CIBICA (full)",
@@ -53,6 +54,7 @@ class AblationTask:
     green_levels: tuple[int, ...]
     n_triplets: int
     seed: int | None
+    edges: str = "boundary"
 
 
 def cibica_no_consensus(
@@ -119,7 +121,7 @@ def _run_ablation_frame(task: AblationTask) -> tuple[int, dict[str, float | None
     by_config: dict[str, list[float]] = {variant: [] for variant in VARIANTS}
     for config_index, green_level in enumerate(task.green_levels):
         try:
-            _, _, edgels = preprocess_green_level(image, green_level)
+            _, _, edgels = preprocess_green_level(image, green_level, edges=task.edges)
         except Exception:
             continue
         if len(edgels) < 3:
@@ -165,6 +167,7 @@ def run_ablation_study(
     ref_configs: Sequence[str] = DEFAULT_REF_CONFIGS,
     seed: int | None = None,
     n_jobs: int = 1,
+    edges: str = "boundary",
     on_progress: Callable[[int, int], None] | None = None,
 ) -> AblationResult:
     """Compute per-variant scores and paired comparisons without file output.
@@ -196,6 +199,7 @@ def run_ablation_study(
             green_levels=green_levels,
             n_triplets=n_triplets,
             seed=seed,
+            edges=edges,
         )
         for frame_index, filename in enumerate(filenames)
     ]

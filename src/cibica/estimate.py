@@ -16,7 +16,9 @@ image itself and cannot run on a bare point set.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, overload
 
@@ -27,6 +29,7 @@ from cibica.estimators import (
     CIBICA,
     HOUGH,
     LS_circle,
+    median_3d,
     qi_2024,
     rcd,
     rht,
@@ -35,6 +38,7 @@ from cibica.estimators import (
 )
 from cibica.io import load_input
 from cibica.preprocessing import image_to_edge_points
+from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS
 
 if TYPE_CHECKING:
     import numpy as np  # noqa: F811
@@ -126,6 +130,7 @@ def _estimate_one(
     *,
     preprocess: str = "canny",
     green_ref=None,
+    edges: str = "boundary",
     **kwargs,
 ) -> tuple[float, float, float]:
     """Estimate one circle from one image or edge-point set."""
@@ -149,7 +154,9 @@ def _estimate_one(
 
     # Edge-point methods: obtain edge points.
     if kind == "image":
-        edgels = image_to_edge_points(array, method=preprocess, green_ref=green_ref)
+        edgels = image_to_edge_points(
+            array, method=preprocess, green_ref=green_ref, edges=edges
+        )
     else:
         edgels = array
 
@@ -166,9 +173,18 @@ def _estimate_one(
         kwargs.setdefault("ymax", bound)
         x, y, r = CIBICA(edgels, **kwargs)
         return _NAN if (np.isnan(x) or r <= 0) else (float(x), float(y), float(r))
+    # The published RHT and RCD thresholds were set for full images, whereas
+    # cibica's inputs are regions of interest about 50 px across, so the
+    # unified API defaults to the companion study's thresholds; the library
+    # functions cibica.rht and cibica.rcd keep the published defaults, and an
+    # explicit keyword here overrides the study value.
     if method == "rht":
+        for key, value in RHT_STUDY_PARAMS.items():
+            kwargs.setdefault(key, value)
         return _normalize_rowcol(*rht(edgels, **kwargs))
     if method == "rcd":
+        for key, value in RCD_STUDY_PARAMS.items():
+            kwargs.setdefault(key, value)
         return _normalize_rowcol(*rcd(edgels, **kwargs))
     if method == "qi":
         return _normalize_rowcol(*qi_2024(edgels, **kwargs))
@@ -220,6 +236,121 @@ def _estimate_cibica_no_consensus(
     return y_median, x_median, radius_median
 
 
+@dataclass(frozen=True, slots=True)
+class ConsensusResult:
+    """CIBICA's estimate with its consensus diagnostics and the ablation variant.
+
+    Attributes:
+        mode: Estimate ``(x, y, r)`` of the joint-mode consensus (CIBICA).
+        median: Estimate of the per-axis-median consensus on the same
+            hypotheses, refined identically (the R2.1 ablation variant).
+        n_triplets: Triplets sampled.
+        n_hypotheses: Triplet circles left after CIBICA's three filters.
+        mode_count: Hypotheses in the modal rounded ``(r, x, y)`` cell.
+        second_count: Hypotheses in the second most populated cell.
+    """
+
+    mode: tuple[float, float, float]
+    median: tuple[float, float, float]
+    n_triplets: int
+    n_hypotheses: int
+    mode_count: int
+    second_count: int
+
+    @property
+    def score(self) -> float:
+        """Share of hypotheses in the modal cell; NaN without hypotheses."""
+        if self.n_hypotheses == 0:
+            return math.nan
+        return self.mode_count / self.n_hypotheses
+
+
+def _refine(
+    coordinates: np.ndarray, centre_row: float, centre_col: float, radius: float
+) -> tuple[float, float, float]:
+    """CIBICA's least-squares refinement on the points within 1.5 px."""
+    near = np.where(
+        np.abs(cdist([(centre_row, centre_col)], coordinates) - radius) < 1.5
+    )
+    points = coordinates[near[1]]
+    if len(points) >= 3:
+        row_fit, col_fit, radius_fit, _ = np.round(
+            LS_circle(points[:, 0], points[:, 1]), 3
+        )
+        return float(col_fit), float(row_fit), float(radius_fit)
+    return float(centre_col), float(centre_row), float(radius)
+
+
+def cibica_consensus_variants(
+    coordinates: np.ndarray,
+    *,
+    n_triplets: int = 500,
+    xmax: int = 50,
+    ymax: int = 50,
+    rmin: float = 4,
+    rmax: float = 30,
+    rng: np.random.Generator | int | None = None,
+) -> ConsensusResult:
+    """Run CIBICA once and read off both consensus rules and the mode's weight.
+
+    Mirrors :func:`cibica.CIBICA` (joint mode, then refinement) and
+    :func:`_estimate_cibica_no_consensus` (per-axis medians,
+    then the same refinement) step for step on one sampled hypothesis set, so
+    the two estimates differ only in the consensus rule. For the same
+    generator state the ``mode`` estimate equals ``CIBICA(...)`` and the
+    ``median`` estimate equals the ablation variant.
+
+    Args:
+        coordinates: Edge points ``[[row, col], ...]``.
+        n_triplets: Triplets to sample.
+        xmax: Image width passed to the hypothesis filter.
+        ymax: Image height passed to the hypothesis filter.
+        rmin: Minimum accepted radius.
+        rmax: Maximum accepted radius.
+        rng: Generator, seed or None.
+
+    Returns:
+        The :class:`ConsensusResult`; both estimates are NaN when fewer than
+        three points or no hypothesis survive the filters.
+    """
+    if len(coordinates) < 3:
+        return ConsensusResult(_NAN, _NAN, 0, 0, 0, 0)
+    triplets = sample_triplets(len(coordinates), n_triplets, rng)
+    first, second, third = (
+        coordinates[triplets[:, 0]],
+        coordinates[triplets[:, 1]],
+        coordinates[triplets[:, 2]],
+    )
+    centre_rows, centre_cols, radii = vectorized_XYR(
+        first, second, third, xmax, ymax, rmin=rmin, rmax=rmax
+    )
+    n_hypotheses = len(radii)
+    if n_hypotheses == 0:
+        return ConsensusResult(_NAN, _NAN, len(triplets), 0, 0, 0)
+
+    cells, counts = np.unique(
+        np.round(np.c_[radii, centre_rows, centre_cols], 0), axis=0, return_counts=True
+    )
+    ordered = np.sort(counts)[::-1]
+    mode_count = int(ordered[0])
+    second_count = int(ordered[1]) if len(ordered) > 1 else 0
+
+    mode_row, mode_col, mode_radius = median_3d(
+        centre_rows, centre_cols, radii, xmax, ymax
+    )
+    mode = _refine(coordinates, mode_row, mode_col, mode_radius)
+
+    median = _refine(
+        coordinates,
+        float(np.median(centre_rows)),
+        float(np.median(centre_cols)),
+        float(np.median(radii)),
+    )
+    return ConsensusResult(
+        mode, median, len(triplets), n_hypotheses, mode_count, second_count
+    )
+
+
 @overload
 def estimate(
     data: str | Path | np.ndarray,
@@ -229,6 +360,7 @@ def estimate(
     seed: int | None = None,
     preprocess: str = "canny",
     green_ref=None,
+    edges: str = "boundary",
     **kwargs,
 ) -> Circle: ...
 
@@ -242,6 +374,7 @@ def estimate(
     seed: int | None = None,
     preprocess: str = "canny",
     green_ref=None,
+    edges: str = "boundary",
     **kwargs,
 ) -> list[Circle]: ...
 
@@ -254,6 +387,7 @@ def estimate(
     seed: int | None = None,
     preprocess: str = "canny",
     green_ref=None,
+    edges: str = "boundary",
     **kwargs,
 ) -> tuple[float, float, float] | list[tuple[float, float, float]]:
     """Estimate one circle per input.
@@ -277,8 +411,21 @@ def estimate(
             ``method="hough"``.
         green_ref: Green background reference image, required when
             ``preprocess="median_filter"``.
+        edges: Edge extractor applied to the binary mask of the
+            ``"green_level"`` and ``"median_filter"`` strategies:
+            ``"boundary"`` (default), the gradient-free morphological internal
+            boundary, or ``"canny"`` for the sensitivity analysis. Ignored for
+            edge-point input, for ``preprocess="canny"`` and for ``hough``.
         **kwargs: Method-specific parameters forwarded to the underlying
             estimator (e.g. ``n_triplets`` for CIBICA, ``param2`` for HOUGH).
+            For ``rht`` and ``rcd`` the parameters carry their published names
+            (``delta``, ``n_t``, ``k_max``, ``d_tol``, ``m_min``; ``T_f``,
+            ``T_min``, ``T_a``, ``T_d``, ``T_r``) and default here to the
+            study's thresholds for ~50 px regions
+            (:data:`cibica.study_config.RHT_STUDY_PARAMS`,
+            :data:`cibica.study_config.RCD_STUDY_PARAMS`) rather than to the
+            published full-image values that :func:`cibica.rht` and
+            :func:`cibica.rcd` use.
 
     Returns:
         A single ``(x_col, y_row, r)`` for one input, or a list of those triples
@@ -301,6 +448,7 @@ def estimate(
             seed=seed,
             preprocess=preprocess,
             green_ref=green_ref,
+            edges=edges,
             **kwargs,
         )
 
@@ -313,5 +461,6 @@ def estimate(
         method=method,
         preprocess=preprocess,
         green_ref=green_ref,
+        edges=edges,
         **kwargs,
     )

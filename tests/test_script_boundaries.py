@@ -16,6 +16,8 @@ SCRIPTS = (
     ROOT / "scripts" / "run_experiment.py",
     ROOT / "scripts" / "run_labeling_analysis.py",
     ROOT / "scripts" / "run_constraint_ablation.py",
+    ROOT / "scripts" / "run_two_circle.py",
+    ROOT / "scripts" / "run_per_configuration_stats.py",
 )
 ESTIMATORS = tuple((ROOT / "src" / "cibica" / "estimators").glob("*.py"))
 FORBIDDEN = (
@@ -45,6 +47,8 @@ def test_study_script_does_not_import_implementation_layers(path):
 WORKER_OPTION_SCRIPTS = (
     ROOT / "scripts" / "run_experiment.py",
     ROOT / "scripts" / "run_constraint_ablation.py",
+    ROOT / "scripts" / "run_two_circle.py",
+    ROOT / "scripts" / "run_per_configuration_stats.py",
 )
 
 
@@ -103,6 +107,14 @@ def test_study_script_help_runs(path):
             ROOT / "scripts" / "run_constraint_ablation.py",
             ["--output", "result.txt"],
         ),
+        (ROOT / "scripts" / "run_two_circle.py", ["--target-radius", "25"]),
+        (ROOT / "scripts" / "run_two_circle.py", ["--datasets", "iris"]),
+        (ROOT / "scripts" / "run_two_circle.py", ["--h", "2", "--target-radius", "9"]),
+        (
+            ROOT / "scripts" / "run_per_configuration_stats.py",
+            ["--permutations", "0"],
+        ),
+        (ROOT / "scripts" / "run_per_configuration_stats.py", ["--bootstrap", "-5"]),
     ],
 )
 def test_study_script_rejects_invalid_options(path, arguments):

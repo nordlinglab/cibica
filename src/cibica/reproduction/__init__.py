@@ -14,12 +14,16 @@ Compares CIBICA against four baselines on real clinical frames
 Methods:
   CIBICA  — deterministic combinatorial sampling + LS refinement  ← proposed
   HOUGH   — OpenCV HoughCircles (classical CHT baseline)
-  RHT     — Randomized Hough Transform
-  RCD     — RANSAC-based circle detection
+  RHT     — Randomized Hough Transform (Xu et al. 1990, Steps 1-9)
+  RCD     — Randomized Circle Detection (Chen & Chung 2001, Steps 1-6)
   QI      — IRLS hyperaccurate fitting
 
-NOTE on HOUGH: HoughCircles receives the grayscale raw image and runs
-its own internal Canny edge detection — it does not use the edgels.
+NOTE on HOUGH: HoughCircles receives the edge image and runs its own internal
+Canny edge detection — it does not use the edgels.
+
+Edge points come from the morphological internal boundary of each
+configuration's binary mask; ``edges="canny"`` reruns everything with the
+former Canny detector for the sensitivity analysis.
 
 Usage (from a clone, with the uv-managed environment):
     uv run python scripts/run_experiment.py
@@ -58,7 +62,13 @@ from cibica.experiments import (
 )
 from cibica.parallel import performance_cores
 from cibica.reproduction import report
-from cibica.study_config import BEST_GL, METHODS
+from cibica.study_config import (
+    BEST_GL,
+    FIGURE_CONFIG,
+    METHODS,
+    TABLE6_CONFIG,
+    reference_window,
+)
 from cibica.visualization._style import apply_publication_style
 from cibica.visualization.config_sweep import (
     plot_heatmap_method_config,
@@ -92,14 +102,14 @@ DEFAULT_OUTPUT = "results"
 __all__ = ["BEST_GL", "DATE", "DEFAULT_OUTPUT", "METHODS", "main"]
 
 
-def measure_throughput(repeats: int = 3) -> dict:
+def measure_throughput(repeats: int = 3, edges: str = "boundary") -> dict:
     """Time the preprocessing stage on cold, otherwise-idle hardware.
 
     Called before every other experiment: it is a wall-clock measurement, and
     both concurrent load and the thermal state left by a previous all-core run
     move the result. See :mod:`cibica.experiments.preprocessing_throughput`.
     """
-    return preprocessing_throughput(_DATA, repeats=repeats)
+    return preprocessing_throughput(_DATA, repeats=repeats, edges=edges)
 
 
 def _progress_reporter(total_cells: int):
@@ -127,8 +137,14 @@ def main(
     supplementary: bool = False,
     n_jobs: int = 0,
     output: str | Path = DEFAULT_OUTPUT,
+    edges: str = "boundary",
 ) -> None:
-    """Run the full study and write every table and figure under ``output``."""
+    """Run the full study and write every table and figure under ``output``.
+
+    ``edges`` is the mask edge extractor of the preprocessing timing and the
+    frame sweep: ``"boundary"`` (default) for the study, ``"canny"`` for the
+    sensitivity rerun, whose tables should go to a separate ``output``.
+    """
     output = Path(output)
     figures = output / "figures"
     tables = output / "tables"
@@ -148,7 +164,7 @@ def main(
     # saturates the performance cores, which both inflates a concurrent timing
     # and leaves the cores throttled for a later one.
     print("\nTiming the preprocessing stage (serial, before any other load)...")
-    throughput = measure_throughput()
+    throughput = measure_throughput(edges=edges)
     print(
         f"  {throughput['ms_per_edge_image']:.2f} ms per edge-image "
         f"({throughput['edge_images_per_second']:.0f}/s)"
@@ -161,31 +177,39 @@ def main(
         seed=seed,
         n_jobs=n_jobs,
         on_progress=_progress_reporter(144 * 18),
+        edges=edges,
     )
 
     print("\nSaving tables...")
     save_raw_csvs(results, output_dir=tables, tag=tag)
-    save_summary_tables(results, output_dir=tables, tag=tag)
+    window = reference_window(edges)
+    save_summary_tables(results, output_dir=tables, tag=tag, configs=window)
 
-    print("\nRunning statistical analysis...")
-    focal_stats = compute_focal_stats(results, focal="CIBICA")
-    pairwise_rows = pairwise_comparisons(results)
+    print(f"\nRunning statistical analysis on {'/'.join(window)}...")
+    focal_stats = compute_focal_stats(results, focal="CIBICA", configs=window)
+    pairwise_rows = pairwise_comparisons(results, configs=window)
     save_stats_csvs(focal_stats, pairwise_rows, output_dir=tables, tag=tag)
-    save_cohort_table(results, _DATA / "cohort.csv", output_dir=tables, tag=tag)
-    subject_summaries = save_subject_tables(results, output_dir=tables, tag=tag)
-    throughput = save_throughput_table(results, throughput, output_dir=tables, tag=tag)
+    save_cohort_table(
+        results, _DATA / "cohort.csv", output_dir=tables, tag=tag, configs=window
+    )
+    subject_summaries = save_subject_tables(
+        results, output_dir=tables, tag=tag, configs=window
+    )
+    throughput = save_throughput_table(
+        results, throughput, output_dir=tables, tag=tag, configs=window
+    )
 
     print("\nGenerating publication figures...")
     cfg_names = results["config_names"]
-    best_idx = [cfg_names.index(gl) for gl in BEST_GL if gl in cfg_names]
+    best_idx = [cfg_names.index(gl) for gl in window if gl in cfg_names]
     # Main-text figures (always produced).
     plot_line_configs(results, output_dir=figures)
     plot_violin(
         results,
-        "GL82",
-        [cfg_names.index("GL82")] if "GL82" in cfg_names else [0],
+        FIGURE_CONFIG,
+        [cfg_names.index(FIGURE_CONFIG)] if FIGURE_CONFIG in cfg_names else [0],
         output_dir=figures,
-        fig_tag="GL82",
+        fig_tag=FIGURE_CONFIG,
         fig_label="Fig13",
     )
     plot_pairwise_heatmap(pairwise_rows, output_dir=figures)
@@ -196,7 +220,7 @@ def main(
         plot_heatmap_method_config(results, output_dir=figures)
         plot_violin(
             results,
-            "GL80/GL82/GL84",
+            "/".join(window),
             best_idx,
             output_dir=figures,
             fig_tag="BestGL",
@@ -210,7 +234,7 @@ def main(
     # Paper Fig. 11 — edge pixels and triplet combinations per frame. Uses GL82:
     # at this reference config the majority of frames have < 100k triplet
     # combinations while a few exceed 1,000,000, matching the manuscript text.
-    fig11_idx = cfg_names.index("GL82") if "GL82" in cfg_names else 0
+    fig11_idx = cfg_names.index(FIGURE_CONFIG) if FIGURE_CONFIG in cfg_names else 0
     plot_pixel_combinations(results["edge_counts"][:, fig11_idx], output_dir=figures)
 
     # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT at GL80; CIBICA
@@ -244,10 +268,11 @@ def main(
     # GL80). The range/CV columns and Fig. 17 need repeated runs per frame, so
     # --full sets the run count to --replicates (the paper uses 100).
     sweep_runs = replicates if full else 1
-    print("\nRunning triplet sweep at GL80 (paper Table 6 / Fig. 17)...")
+    print(f"\nRunning triplet sweep at {TABLE6_CONFIG} (paper Table 6 / Fig. 17)...")
     triplet_result = run_triplet_sweep(
         _DATA,
         runs=sweep_runs,
+        config_name=TABLE6_CONFIG,
         seed=seed,
         n_jobs=n_jobs,
     )
@@ -264,7 +289,9 @@ def main(
     # Paper Table 7 (component ablation) — only under --full (extra CIBICA runs).
     if full:
         print("\nRunning ablation study (paper Table 7)...")
-        ablation_result = run_ablation_study(_DATA, seed=seed, n_jobs=n_jobs)
+        ablation_result = run_ablation_study(
+            _DATA, seed=seed, n_jobs=n_jobs, ref_configs=window, edges=edges
+        )
         pd.DataFrame(ablation_result.rows).to_csv(
             tables / f"Table7_Ablation_{tag}.csv", index=False
         )

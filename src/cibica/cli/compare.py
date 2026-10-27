@@ -53,6 +53,7 @@ def run_compare(args: argparse.Namespace) -> int:
                 seed=args.seed,
                 preprocess=args.preprocess,
                 green_ref=green_ref,
+                edges=args.edges,
             )
             by_method.append(
                 [cast(Circle, estimated)] if single else cast(list[Circle], estimated)

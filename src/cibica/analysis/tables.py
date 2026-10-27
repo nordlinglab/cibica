@@ -49,7 +49,7 @@ def save_raw_csvs(results, output_dir=".", tag=""):
         print(f"  Saved: {path}")
 
 
-def save_summary_tables(results, output_dir=".", tag=""):
+def save_summary_tables(results, output_dir=".", tag="", configs=None):
     """Write paper-numbered tables (T3, T4) plus supporting per-method summaries.
 
     - Table3_BestConfig  -> paper Table 3 (baseline; each method at its best
@@ -58,9 +58,9 @@ def save_summary_tables(results, output_dir=".", tag=""):
       means over replicates and ``Jaccard_repl_std`` is the run-to-run std.
     - Table4_CrossConfig -> paper Table 4 (best-config mean vs all-config mean).
     - Summary_AllConfigs / Summary_BestGL -> supporting (not numbered tables in
-      the paper); the GL80/82/84 scores underlie the statistical comparison.
+      the paper); the reference-window scores underlie the statistical comparison.
     """
-    best_idx = reference_config_indices(results)
+    best_idx = reference_config_indices(results, configs)
     bcs = {m: best_config_stats(results, m) for m in METHODS}
 
     # Paper Table 3 — baseline: each method at its best preprocessing config.
@@ -157,7 +157,7 @@ def save_stats_csvs(focal_stats, pairwise_rows, output_dir=".", tag=""):
     print(f"  Saved: Stats_Pairwise_{tag}.csv")
 
 
-def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA"):
+def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA", configs=None):
     """Participant-level summaries the cohort table could not provide.
 
     Frames are clustered within participants (18 participants x 8 frames), so
@@ -171,7 +171,7 @@ def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA"):
         method, for reuse by the console summary.
     """
     subjects = subject_ids(results["filenames"])
-    scores = reference_scores(results)
+    scores = reference_scores(results, configs)
 
     summaries = {m: per_subject_statistics(scores[m], subjects) for m in METHODS}
     pd.DataFrame(
@@ -223,7 +223,9 @@ def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA"):
     return summaries
 
 
-def save_throughput_table(results, throughput, output_dir=".", tag="", focal="CIBICA"):
+def save_throughput_table(
+    results, throughput, output_dir=".", tag="", focal="CIBICA", configs=None
+):
     """Combine a preprocessing measurement with the fitting time and write it.
 
     The sweep times only the estimator call, so ``throughput`` must come from a
@@ -233,7 +235,7 @@ def save_throughput_table(results, throughput, output_dir=".", tag="", focal="CI
     Returns:
         dict: ``throughput`` merged with the ``end_to_end_fps`` breakdown.
     """
-    best_idx = reference_config_indices(results)
+    best_idx = reference_config_indices(results, configs)
     fit_s = float(results[f"Time_{focal}"][:, best_idx].mean())
     e2e = end_to_end_fps(
         throughput["ms_per_edge_image"], 1.0 / fit_s if fit_s > 0 else 1.0
@@ -246,8 +248,8 @@ def save_throughput_table(results, throughput, output_dir=".", tag="", focal="CI
     return {**throughput, **e2e}
 
 
-def save_cohort_table(results, cohort_path, output_dir=".", tag=""):
-    """Paper Table 5: mean Jaccard per cohort on GL80/GL82/GL84, per method.
+def save_cohort_table(results, cohort_path, output_dir=".", tag="", configs=None):
+    """Paper Table 5: mean Jaccard per cohort on the reference window, per method.
 
     Output rows are cohorts and columns are methods; only aggregate means and
     frame counts are written. Columns follow the manuscript order (HOUGH/QI
@@ -261,7 +263,7 @@ def save_cohort_table(results, cohort_path, output_dir=".", tag=""):
     cohort = pd.read_csv(cohort_path)
     cohort_map = dict(zip(cohort["Filename"], cohort["cohort"]))
     groups = np.array([cohort_map.get(f, "unknown") for f in results["filenames"]])
-    scores = reference_scores(results)
+    scores = reference_scores(results, configs)
     rows = []
     for grp in ("PD", "control"):
         mask = groups == grp

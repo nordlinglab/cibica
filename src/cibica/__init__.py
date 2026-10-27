@@ -8,6 +8,9 @@ hypotheses, removing unstable candidates, selecting the most frequently
 recurring jointly-encoded centre--radius hypothesis (a frequency-weighted
 consensus), and refining it by least squares on the inlier edge points
 (Roman Catafau & Nordling, 2023, https://doi.org/10.2139/ssrn.4542991).
+The edge points themselves come from the morphological internal boundary of a
+binary mask (:func:`internal_boundary`), so the whole marker-localisation
+pipeline uses no image derivative; Canny stays available for comparison.
 
 Five circle estimators are provided --- the proposed CIBICA method and four
 baselines by their original inventors:
@@ -15,10 +18,10 @@ baselines by their original inventors:
 - ``CIBICA``  : proposed gradient-free combinatorial estimator.
 - ``HOUGH``   : Circle Hough Transform --- Duda & Hart (1972),
   https://doi.org/10.1145/361237.361242 (OpenCV gradient method).
-- ``rht``     : Randomized Hough Transform --- Xu, Oja & Kultanen (1990),
-  https://doi.org/10.1016/0167-8655(90)90042-Z.
-- ``rcd``     : Randomized Circle Detection --- Chen & Chung (2001),
-  https://doi.org/10.1006/cviu.2001.0923.
+- ``rht``     : Randomized Hough Transform, Steps 1-9 as published --- Xu, Oja
+  & Kultanen (1990), https://doi.org/10.1016/0167-8655(90)90042-Z.
+- ``rcd``     : Randomized Circle Detection, Steps 1-6 as published --- Chen &
+  Chung (2001), https://doi.org/10.1006/cviu.2001.0923.
 - ``qi_2024`` : robust algebraic (IRLS) fitting --- Qi et al. (2024),
   https://doi.org/10.1016/j.nima.2024.169775.
 
@@ -48,7 +51,9 @@ from cibica.estimators import (
     median_3d,
     qi_2024,
     rcd,
+    rcd_detect_all,
     rht,
+    rht_detect_all,
     vectorized_XYR,
 )
 from cibica.io import (
@@ -59,15 +64,18 @@ from cibica.io import (
     save_results,
 )
 from cibica.preprocessing import (
+    EDGE_EXTRACTORS,
     auto_canny,
+    extract_edges,
     frames_to_edgepoints,
     get_preprocessing_configs,
     image_to_edge_points,
+    internal_boundary,
     preprocess_green_level,
     preprocess_median_filter,
 )
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 __author__ = "Torbjörn E. M. Nordling"
 __email__ = "t@nordlinglab.org"
 
@@ -92,13 +100,18 @@ __all__ = [
     # baselines
     "HOUGH",
     "rht",
+    "rht_detect_all",
     "rcd",
+    "rcd_detect_all",
     "qi_2024",
     # preprocessing
     "get_preprocessing_configs",
     "image_to_edge_points",
     "preprocess_green_level",
     "preprocess_median_filter",
+    "EDGE_EXTRACTORS",
+    "extract_edges",
+    "internal_boundary",
     "auto_canny",
     "frames_to_edgepoints",
     # generic I/O

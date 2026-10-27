@@ -17,6 +17,7 @@ from cibica.analysis.circle_geometry import jaccard_circles
 from cibica.estimate import estimate
 from cibica.parallel import map_tasks, task_rng
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
+from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS
 
 RMIN, RMAX = 4.0, 30.0
 REGIMES = ("unconstrained", "radius_only", "matched")
@@ -109,24 +110,21 @@ def _score(
             maxRadius=maximum,
         )
     elif method == "RHT":
+        # Published algorithm, study-scale thresholds (study_config).
         circle = estimate(
             edgels,
             method="rht",
-            num_iterations=1000,
-            threshold=3,
             rng=rng,
             constraints=constraints,
+            **RHT_STUDY_PARAMS,
         )
     elif method == "RCD":
         circle = estimate(
             edgels,
             method="rcd",
-            num_iterations=1000,
-            distance_threshold=2,
-            min_inliers=5,
-            min_distance=5,
             rng=rng,
             constraints=constraints,
+            **RCD_STUDY_PARAMS,
         )
     else:
         circle = estimate(edgels, method="qi")

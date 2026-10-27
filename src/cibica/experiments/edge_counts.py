@@ -23,6 +23,7 @@ class EdgeCountTask:
     data_dir: Path
     filename: str
     green_level: int
+    edges: str = "boundary"
 
 
 def _count_edgels(task: EdgeCountTask) -> int | None:
@@ -31,7 +32,7 @@ def _count_edgels(task: EdgeCountTask) -> int | None:
     if image is None:
         return None
     try:
-        _, _, edgels = preprocess_green_level(image, task.green_level)
+        _, _, edgels = preprocess_green_level(image, task.green_level, edges=task.edges)
     except Exception:
         return None
     return len(edgels)
@@ -43,11 +44,13 @@ def compute_edge_counts(
     *,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    edges: str = "boundary",
 ) -> np.ndarray:
     """Return one edge-pixel count per loadable frame.
 
     Counts are returned in dataset order and unloadable frames are dropped, so
-    the result is identical for any ``n_jobs``.
+    the result is identical for any ``n_jobs``. ``edges`` selects the mask's
+    edge extractor (``"boundary"`` or ``"canny"``), as in the frame sweep.
     """
     data_path = Path(data_dir)
     ground_truth = pd.read_csv(data_path / "Ground_Truth.csv")
@@ -63,6 +66,7 @@ def compute_edge_counts(
             data_dir=data_path,
             filename=filename,
             green_level=int(config["green_level"]),
+            edges=edges,
         )
         for filename in ground_truth["Filename"].tolist()
     ]

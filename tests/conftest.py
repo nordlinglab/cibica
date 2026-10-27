@@ -21,7 +21,7 @@ SUBJECTS = ("135258724", "051331512")
 
 # A trimmed configuration list that still spans both preprocessing families and
 # contains the three reference green levels.
-CONFIG_NAMES = ["GL78", "GL80", "GL82", "GL84", "GL86", "Med9", "Med11"]
+CONFIG_NAMES = ["GL70", "GL72", "GL74", "GL78", "GL80", "GL82", "GL84", "Med9", "Med11"]
 
 # Mean Jaccard per method, strictly descending, so the order the writers sort
 # into is observable and the focal method leads every baseline.

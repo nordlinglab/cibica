@@ -1,179 +1,333 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""RHT: randomized Hough Transform for circle detection.
+"""RHT: Randomized Hough Transform for circle detection.
 
 Original method:
     Xu, L., Oja, E., & Kultanen, P. (1990). A new curve detection method:
     Randomized Hough Transform (RHT). Pattern Recognition Letters, 11(5),
     331-338. https://doi.org/10.1016/0167-8655(90)90042-Z
 
-Implements a randomized version of the Hough transform for robust circle
-fitting. Uses random sampling and voting to detect circles efficiently.
+Implements the general RHT procedure, Steps 1-9 of the paper, specialised to
+circles (eq. 5a). Three distinct edge points are drawn without replacement
+and mapped to one point ``(a, b, r)`` of a dynamically growing parameter set
+P. A point within tolerance ``delta`` of an existing cell is merged into it
+(parameters averaged, score incremented; the paper's improvement (2)),
+otherwise it is inserted as a new cell with score one. A cell reaching the
+score threshold ``n_t`` becomes a candidate, which is accepted as a circle
+when more than ``m_min`` edge points lie on it (Step 8) and is otherwise
+deleted. Sampling stops at the first accepted circle or after ``k_max``
+samples. Support therefore comes from independent random samples reproducing
+the same parameters, not from the inlier count of individual hypotheses,
+which was the RANSAC-style adaptation this module replaced in cibica 2.2.0.
 
-Main function: rht(edgels, **kwargs)
+Deviations from the paper, each results-equivalent:
+
+- The circle through three points is solved as a linear system rather than by
+  intersecting two perpendicular bisectors (eq. 6); the two are mathematically
+  identical, and the RCD paper uses the linear solve.
+- "Pixels lying on the curve" (Step 8) is realised digitally as edge points
+  within ``d_tol`` of the circle, the counterpart of RCD's ``T_d``.
+- :func:`rht` returns the first accepted circle. Supporting-pixel removal and
+  the reset of P (Steps 8-9) only prepare the search for further circles, so
+  they cannot change the first detection; :func:`rht_detect_all` runs them.
+
+Main functions: ``rht(edgels, **kwargs)`` and ``rht_detect_all(edgels, **kwargs)``.
 """
 
+from __future__ import annotations
+
 import numpy as np
-from scipy.special import comb
 
 from cibica._constraints import Constraints, report_active, reporting_enabled
-from cibica._rng import random_subsets, resolve_rng
+from cibica._rng import resolve_rng
 from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
 
+__all__ = ["rht", "rht_detect_all"]
 
-def rht(edgels, num_iterations=1000, threshold=5, rng=None, constraints=None):
+#: ``(a, b, r)`` in the coordinate order of the input points.
+_Params = tuple[float, float, float]
+
+
+def _circle_through(p1, p2, p3) -> _Params | None:
+    """Return ``(a, b, r)`` of the circle through three points.
+
+    Args:
+        p1: First point as ``(row, col)``.
+        p2: Second point.
+        p3: Third point.
+
+    Returns:
+        The centre ``(a, b)`` in the input coordinate order and the radius
+        ``r``, or ``None`` when the points are (numerically) collinear.
     """
-    Fit a circle to edge points using Randomized Hough Transform.
+    temp = p2[0] ** 2 + p2[1] ** 2
+    bc = (p1[0] ** 2 + p1[1] ** 2 - temp) / 2.0
+    cd = (temp - p3[0] ** 2 - p3[1] ** 2) / 2.0
+    det = (p1[0] - p2[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p2[1])
+    if abs(det) < 1e-12:
+        return None
+    a = (bc * (p2[1] - p3[1]) - cd * (p1[1] - p2[1])) / det
+    b = ((p1[0] - p2[0]) * cd - (p2[0] - p3[0]) * bc) / det
+    r = float(np.sqrt((p1[0] - a) ** 2 + (p1[1] - b) ** 2))
+    return float(a), float(b), r
 
-    This algorithm repeatedly samples random triplets of points, fits circles
-    to them, and counts how many points support each circle hypothesis.
-    The circle with the most support (votes) is returned.
 
-    Algorithm steps:
-    1. Randomly sample 3 points
-    2. Fit a circle through these 3 points
-    3. Count how many points are within threshold distance of the circle
-    4. Keep track of the best-scoring circle
-    5. Repeat for num_iterations or until all combinations exhausted
+class _ParameterSet:
+    """The dynamically growing set P of Steps 4-6.
 
-    Parameters
-    ----------
-    edgels : numpy.ndarray
-        Array of shape (n, 2) containing (x, y) coordinates of edge points
-    num_iterations : int, optional
-        Maximum number of random samples to try (default: 1000)
-        If there are fewer than num_iterations possible triplet combinations,
-        all combinations are considered
-    threshold : float, optional
-        Distance threshold for inlier counting (default: 5)
-        Points within this distance from the circle are counted as votes
-    rng : numpy.random.Generator, int, or None, optional
-        Source of randomness for triplet sampling. Pass an explicit generator
-        when calling from worker processes; ``None`` derives one from the
-        global NumPy stream.
-    constraints : cibica.Constraints, optional
-        Radius and centre bounds a candidate must satisfy. ``None`` (default)
-        searches unbounded, which is the historical behaviour. When a bound
-        discards what would otherwise have won, that is reported on stderr if
-        reporting is enabled.
-
-    Returns
-    -------
-    center : numpy.ndarray
-        Array ``[x_col, y_row]`` of circle center coordinates
-    radius : float
-        Circle radius
-
-    Notes
-    -----
-    Returns (``[nan, nan]``, ``nan``) if no valid circle is found;
-    test it with :func:`cibica.is_no_circle`.
-
-    The algorithm automatically limits iterations to C(n,3) to avoid
-    sampling the same triplet multiple times.
-
-    Typical threshold values depend on image scale:
-    - Small images (100x100): threshold ≈ 2-3 pixels
-    - Medium images (512x512): threshold ≈ 5-10 pixels
-    - Large images (1024x1024): threshold ≈ 10-20 pixels
-
-    Performance scales as O(num_iterations * n) where n is number of points.
-
-    Examples
-    --------
-    >>> theta = np.linspace(0, 2*np.pi, 100)
-    >>> edgels = np.column_stack([50 + 20*np.cos(theta), 50 + 20*np.sin(theta)])
-    >>> center, radius = rht(edgels, num_iterations=500, threshold=3)
-    >>> print(f"Center: {center}, Radius: {radius:.2f}")
+    Cells are kept in insertion order and the search returns the first cell
+    within tolerance, so the result is the same as a list scanned front to
+    back; the distance test is vectorised over the cells only to save time.
     """
-    # Input validation
-    if len(edgels) < 3:
-        return NO_CIRCLE_CENTER(), NO_RADIUS
 
-    n_points = edgels.shape[0]
+    def __init__(self) -> None:
+        self._params = np.empty((64, 3))
+        self._scores = np.empty(64, dtype=np.int64)
+        self.size = 0
 
-    # Limit iterations to number of possible triplet combinations
-    max_combinations = int(comb(n_points, 3, exact=True))
-    num_iterations = min(num_iterations, max_combinations)
+    def find(self, point: np.ndarray, delta: float) -> int:
+        """Index of the first cell within ``delta`` of ``point``, or ``-1``."""
+        if self.size == 0:
+            return -1
+        differences = self._params[: self.size] - point
+        distances = np.sqrt(np.sum(differences * differences, axis=1))
+        hits = np.flatnonzero(distances < delta)
+        return int(hits[0]) if hits.size else -1
 
-    cons = constraints if constraints is not None else Constraints()
-    report = reporting_enabled() and not cons.is_empty
+    def insert(self, point: np.ndarray) -> None:
+        """Step 5: append ``point`` as a new cell with score one."""
+        if self.size == self._scores.size:
+            self._params = np.vstack((self._params, np.empty_like(self._params)))
+            self._scores = np.concatenate((self._scores, np.empty_like(self._scores)))
+        self._params[self.size] = point
+        self._scores[self.size] = 1
+        self.size += 1
 
-    triplets = random_subsets(resolve_rng(rng), n_points, 3, num_iterations)
-    samples = edgels[triplets]
-    systems = np.concatenate(
-        (samples, np.ones((num_iterations, 3, 1), dtype=samples.dtype)),
-        axis=2,
+    def merge(self, index: int, point: np.ndarray) -> int:
+        """Step 6: average the cell with ``point`` and return its new score."""
+        self._params[index] = (self._params[index] + point) / 2.0
+        self._scores[index] += 1
+        return int(self._scores[index])
+
+    def params(self, index: int) -> _Params:
+        """The ``(a, b, r)`` of one cell."""
+        a, b, r = self._params[index]
+        return float(a), float(b), float(r)
+
+    def delete(self, index: int) -> None:
+        """Remove one cell, keeping the order of the others."""
+        last = self.size - 1
+        self._params[index:last] = self._params[index + 1 : self.size]
+        self._scores[index:last] = self._scores[index + 1 : self.size]
+        self.size = last
+
+    def clear(self) -> None:
+        """Step 9: reset P."""
+        self.size = 0
+
+
+def _search(
+    edgels,
+    delta: float,
+    n_t: int,
+    k_max: int,
+    d_tol: float,
+    m_min: int,
+    rng,
+    cons: Constraints,
+    max_circles: int | None,
+) -> tuple[list[_Params], _Params | None]:
+    """Run Steps 1-9 and return the accepted circles in detection order.
+
+    Also returns the first circle that passed Step 8 but was rejected by
+    ``cons`` before any circle was accepted, which is what an unconstrained
+    search would have returned; it is ``None`` when the bounds did not
+    change the first detection.
+    """
+    generator = resolve_rng(rng)
+    points = np.asarray(edgels, dtype=float)
+    accepted: list[_Params] = []
+    first_rejected: _Params | None = None
+    if len(points) < 3:
+        return accepted, first_rejected
+
+    active = np.ones(len(points), dtype=bool)
+    cells = _ParameterSet()
+    k = 0
+    while k < k_max and int(active.sum()) >= max(3, m_min):
+        k += 1
+        # Step 2: three distinct pixels, uniformly without replacement.
+        indices = generator.choice(np.flatnonzero(active), size=3, replace=False)
+        circle = _circle_through(*points[indices])
+        if circle is None:
+            continue
+        point = np.array(circle)
+
+        # Step 4: search P for a cell within tolerance delta.
+        hit = cells.find(point, delta)
+        if hit < 0:
+            cells.insert(point)
+            continue
+        if cells.merge(hit, point) < n_t:
+            continue
+
+        # Step 8: the cell is a candidate; count the pixels lying on its circle.
+        a, b, r = cells.params(hit)
+        active_indices = np.flatnonzero(active)
+        distances = np.abs(
+            np.hypot(points[active_indices, 0] - a, points[active_indices, 1] - b) - r
+        )
+        members = distances <= d_tol
+        if int(members.sum()) <= m_min:
+            # False alarm: the pixels stay in D, the cell leaves P.
+            cells.delete(hit)
+            continue
+
+        # Step 9: a detected circle. The bounds are cibica's selection layer on
+        # top of the published rule: a detection outside them is treated like
+        # any other detection, its pixels leave D and P is reset, so the
+        # search moves on to the next circle instead of re-detecting this one.
+        # The centre is (a, b) = (row, col), so x = b and y = a for the bounds.
+        if cons.accepts(b, a, r):
+            accepted.append((a, b, r))
+            if max_circles is not None and len(accepted) >= max_circles:
+                break
+        elif not accepted and first_rejected is None:
+            first_rejected = (a, b, r)
+        active[active_indices[members]] = False
+        cells.clear()
+        k = 0
+    return accepted, first_rejected
+
+
+def _report(
+    method: str,
+    cons: Constraints,
+    accepted: list[_Params],
+    first_rejected: _Params | None,
+) -> None:
+    """Say on stderr when a bound changed the first detection, if enabled."""
+    if first_rejected is None or cons.is_empty or not reporting_enabled():
+        return
+    a, b, r = first_rejected
+    free_xyr = (b, a, r)
+    best_xyr = (
+        None if not accepted else (accepted[0][1], accepted[0][0], accepted[0][2])
     )
-    right_hand_sides = -np.sum(samples**2, axis=2)
-    valid = np.abs(np.linalg.det(systems)) >= 1e-10
+    violated = cons.violation(*free_xyr)
+    if violated is not None:
+        report_active(method, violated, best_xyr, free_xyr)
 
-    parameters = np.full((num_iterations, 3), np.nan)
-    if valid.any():
-        try:
-            parameters[valid] = np.linalg.solve(
-                systems[valid], right_hand_sides[valid, :, None]
-            )[:, :, 0]
-        except np.linalg.LinAlgError:
-            for index in np.flatnonzero(valid):
-                try:
-                    parameters[index] = np.linalg.solve(
-                        systems[index], right_hand_sides[index]
-                    )
-                except np.linalg.LinAlgError:
-                    valid[index] = False
 
-    centers = -parameters[:, :2] / 2
-    radius_squared = np.sum(parameters[:, :2] ** 2, axis=1) / 4 - parameters[:, 2]
-    valid &= radius_squared > 0
-    radii = np.sqrt(np.maximum(radius_squared, 0))
-    scores = np.full(num_iterations, -1, dtype=np.int64)
-    candidate_indices = np.flatnonzero(valid)
-    for start in range(0, candidate_indices.size, 256):
-        indices = candidate_indices[start : start + 256]
-        distances = np.linalg.norm(
-            edgels[None, :, :] - centers[indices, None, :], axis=2
-        )
-        scores[indices] = np.sum(
-            np.abs(distances - radii[indices, None]) < threshold,
-            axis=1,
-        )
+def rht_detect_all(
+    edgels,
+    delta: float = 2.0,
+    n_t: int = 3,
+    k_max: int = 10000,
+    d_tol: float = 1.0,
+    m_min: int = 10,
+    rng=None,
+    constraints: Constraints | None = None,
+    max_circles: int | None = None,
+) -> list[tuple[np.ndarray, float]]:
+    """Detect circles with the full RHT procedure (Xu et al. 1990, Steps 1-9).
 
-    free_circle = None
-    if scores.size and scores.max(initial=0) > 0:
-        free_index = int(np.argmax(scores))
-        free_circle = (*centers[free_index], radii[free_index])
+    After every accepted circle its pixels are removed from the edge set, the
+    parameter set P and the sample counter are reset (Steps 8-9), and the
+    search continues until ``k_max`` samples pass without a detection or
+    fewer than ``max(3, m_min)`` edge points remain.
 
-    accepted = np.zeros(num_iterations, dtype=bool)
-    for index in candidate_indices:
-        center_x, center_y = centers[index]
-        accepted[index] = cons.accepts(center_y, center_x, radii[index])
-    accepted_scores = np.where(accepted, scores, -1)
-    best_circle = None
-    if accepted_scores.size and accepted_scores.max(initial=0) > 0:
-        best_index = int(np.argmax(accepted_scores))
-        best_circle = (*centers[best_index], radii[best_index])
+    Args:
+        edgels: Edge points of shape ``(n, 2)`` as ``[[row, col], ...]``.
+        delta: Parameter-space tolerance of Step 4: a new point merges into an
+            existing cell when their Euclidean distance in ``(a, b, r)`` space
+            is below ``delta``. ``0`` gives the paper's highest resolution;
+            larger values trade resolution for storage and speed.
+        n_t: Score threshold of Step 6; the paper suggests 2-3.
+        k_max: Stopping bound of Step 7 on the sample counter, which resets
+            after every detection (Step 9).
+        d_tol: Digital realisation of "pixels lying on the curve" (Step 8):
+            edge points within ``d_tol`` of the candidate circle belong to it.
+        m_min: Curve-pixel count a candidate must exceed to be a circle
+            (Step 8): the test is ``count > m_min``, so ``m_min`` pixels or
+            fewer is a false alarm and the cell is deleted.
+        rng: Source of randomness: a ``numpy.random.Generator``, an integer
+            seed, or ``None`` to derive one from the global NumPy stream.
+        constraints: Radius and centre bounds a detection must satisfy.
+            ``None`` (default) accepts every detection. A detection outside
+            the bounds is not returned; its pixels still leave the edge set,
+            so the search proceeds to the next circle. When a bound changes
+            the first detection, that is reported on stderr if reporting is
+            enabled.
+        max_circles: Stop after this many accepted circles; ``None`` runs the
+            search to exhaustion.
 
-    if report and free_circle is not None:
-        free_xyr = (free_circle[1], free_circle[0], free_circle[2])
-        best_xyr = (
-            None
-            if best_circle is None
-            else (best_circle[1], best_circle[0], best_circle[2])
-        )
-        violated = cons.violation(*free_xyr)
-        if violated is not None and (
-            best_xyr is None or not np.allclose(best_xyr, free_xyr)
-        ):
-            report_active("RHT", violated, best_xyr, free_xyr)
+    Returns:
+        One ``([x_col, y_row], r)`` pair per accepted circle, in detection
+        order; an empty list when nothing is detected.
 
-    # Return best circle found
-    if best_circle is None:
+    Notes:
+        The published thresholds were set for full images. For regions of
+        interest about 50 px across, :data:`cibica.study_config.RHT_STUDY_PARAMS`
+        holds the thresholds of the companion study, which
+        :func:`cibica.estimate` applies by default.
+    """
+    cons = constraints if constraints is not None else Constraints()
+    accepted, first_rejected = _search(
+        edgels, delta, n_t, k_max, d_tol, m_min, rng, cons, max_circles
+    )
+    _report("RHT", cons, accepted, first_rejected)
+    return [(np.array([b, a]), float(r)) for a, b, r in accepted]
+
+
+def rht(
+    edgels,
+    delta: float = 2.0,
+    n_t: int = 3,
+    k_max: int = 10000,
+    d_tol: float = 1.0,
+    m_min: int = 10,
+    rng=None,
+    constraints: Constraints | None = None,
+) -> tuple[np.ndarray, float]:
+    """Fit one circle to edge points with the Randomized Hough Transform.
+
+    The single-circle form of :func:`rht_detect_all`: the first circle that
+    passes Step 8 (and the optional bounds) is returned.
+
+    Args:
+        edgels: Edge points of shape ``(n, 2)`` as ``[[row, col], ...]``.
+        delta: Parameter-space merge tolerance of Step 4 (default 2.0).
+        n_t: Score threshold of Step 6 (default 3; the paper suggests 2-3).
+        k_max: Maximum number of samples before giving up (default 10000).
+        d_tol: On-circle band of Step 8 in pixels (default 1.0).
+        m_min: A candidate is a circle when more than ``m_min`` edge points
+            lie on it (default 10).
+        rng: ``numpy.random.Generator``, integer seed, or ``None``.
+        constraints: Optional :class:`cibica.Constraints`; see
+            :func:`rht_detect_all`.
+
+    Returns:
+        The centre as ``[x_col, y_row]`` and the radius. Returns
+        (``[nan, nan]``, ``nan``) when no circle is accepted within ``k_max``
+        samples; test it with :func:`cibica.is_no_circle`.
+
+    Examples:
+        >>> theta = np.linspace(0, 2 * np.pi, 100)
+        >>> edgels = np.column_stack([50 + 20 * np.sin(theta), 50 + 20 * np.cos(theta)])
+        >>> center, radius = rht(edgels, d_tol=1.0, m_min=10, rng=0)
+    """
+    detected = rht_detect_all(
+        edgels,
+        delta=delta,
+        n_t=n_t,
+        k_max=k_max,
+        d_tol=d_tol,
+        m_min=m_min,
+        rng=rng,
+        constraints=constraints,
+        max_circles=1,
+    )
+    if not detected:
         return NO_CIRCLE_CENTER(), NO_RADIUS
-
-    # Swapped here so every estimator returns (x=col, y=row); the algorithm
-    # works in the (row, col) order of the input points.
-    center = np.array([best_circle[1], best_circle[0]])
-    radius = best_circle[2]
-
-    return center, float(radius)
+    return detected[0]

@@ -23,6 +23,7 @@ class _EstimateTask:
     method: str
     preprocess: str
     green_ref: Any
+    edges: str
     kwargs: dict[str, Any]
     seed: int | None
 
@@ -39,6 +40,7 @@ def _run_estimate_task(task: _EstimateTask) -> Circle:
         method=task.method,
         preprocess=task.preprocess,
         green_ref=task.green_ref,
+        edges=task.edges,
         **kwargs,
     )
 
@@ -51,6 +53,7 @@ def _estimate_many(
     seed: int | None = None,
     preprocess: str = "canny",
     green_ref: Any = None,
+    edges: str = "boundary",
     **kwargs: Any,
 ) -> list[Circle]:
     """Implement sequence handling for :func:`cibica.estimate`.
@@ -65,6 +68,8 @@ def _estimate_many(
             are independent of worker count.
         preprocess: Image-to-edge-points strategy for edge-point methods.
         green_ref: Green background reference image for ``median_filter``.
+        edges: Edge extractor for the binary-mask strategies (``"boundary"``
+            or ``"canny"``); see :func:`cibica.estimate`.
         **kwargs: Method-specific parameters.
 
     Returns:
@@ -80,6 +85,7 @@ def _estimate_many(
             method=method,
             preprocess=preprocess,
             green_ref=green_ref,
+            edges=edges,
             kwargs=dict(kwargs),
             seed=seed,
         )

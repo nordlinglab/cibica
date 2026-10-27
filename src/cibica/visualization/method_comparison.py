@@ -29,12 +29,12 @@ def plot_violin(
     config_label,
     cfg_idx_list,
     output_dir=".",
-    fig_tag="GL82",
+    fig_tag="GL72",
     fig_label="Fig13",
 ):
     """Violin + strip + median plot for given config indices.
 
-    The GL82 view is paper Fig. 13 (``fig_label='Fig13'``); other config sets
+    The GL72 view is paper Fig. 13 (``fig_label='Fig13'``); other config sets
     are supplementary diagnostics (``fig_label='FigS2'``).
     """
     data = [results[f"Jaccard_{m}"][:, cfg_idx_list].mean(axis=1) for m in METHODS]
