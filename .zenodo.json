@@ -1,7 +1,7 @@
 {
   "upload_type": "software",
   "title": "cibica: Robust Gradient-Free Circle Estimation for Motion-Blurred Clinical Video",
-  "description": "Reference implementation of CIBICA, a gradient-free combinatorial circle estimation method for low-resolution, motion-blurred clinical video, together with classical and robust baselines (Circle Hough Transform, Randomized Hough Transform, Random Circle Detection, robust algebraic fitting), the 18 preprocessing configurations, the Jaccard-based evaluation, the nonparametric statistical comparison, and the scripts that regenerate every figure and table in the accompanying manuscript.",
+  "description": "Reference implementation of CIBICA, a gradient-free combinatorial circle estimation method for low-resolution, motion-blurred clinical video, together with classical and robust baselines (Circle Hough Transform, Randomized Hough Transform, Randomized Circle Detection, robust algebraic fitting), the 18 preprocessing configurations, the Jaccard-based evaluation, the nonparametric statistical comparison, and the scripts that regenerate every figure and table in the accompanying manuscript.",
   "access_right": "open",
   "license": "Apache-2.0",
   "creators": [

@@ -32,6 +32,7 @@ def main(
     report_constraints: bool = False,
     output: str | Path | None = None,
     n_jobs: int = 0,
+    edges: str = "boundary",
 ) -> None:
     """Compute, print, and save the constraint-ablation table."""
     if frames is not None and frames <= 0:
@@ -53,6 +54,7 @@ def main(
         seed=seed,
         report_constraints=report_constraints,
         n_jobs=n_jobs,
+        edges=edges,
     )
     output_path = (
         Path(output)
@@ -86,6 +88,15 @@ if __name__ == "__main__":
     )
     parser.add_argument("--seed", type=nonnegative_int, default=42, help="RNG seed")
     parser.add_argument(
+        "--edges",
+        choices=("boundary", "canny"),
+        default="boundary",
+        help=(
+            "edge extractor; also selects the reference window, GL70-GL74 for "
+            "the boundary and GL80-GL84 for Canny"
+        ),
+    )
+    parser.add_argument(
         "--report-constraints",
         action="store_true",
         help="report on stderr when a bound changes an estimate",
@@ -118,8 +129,8 @@ if __name__ == "__main__":
         type=_csv_path,
         metavar="FILE",
         help=(
-            "output CSV file (default: dated under ./results/tables, or tagged "
-            "COMPUTER_SEED when --seed is fixed)"
+            "output CSV file (default: "
+            "./results/tables/Stats_ConstraintAblation_<COMPUTER>_<SEED>.csv)"
         ),
     )
     arguments = parser.parse_args()
@@ -130,4 +141,5 @@ if __name__ == "__main__":
         report_constraints=arguments.report_constraints,
         output=arguments.output,
         n_jobs=arguments.jobs,
+        edges=arguments.edges,
     )

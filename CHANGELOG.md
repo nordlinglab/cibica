@@ -5,218 +5,109 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Archived releases share the all-versions Zenodo DOI [doi:10.5281/zenodo.20790415](https://doi.org/10.5281/zenodo.20790415).
 
-## [2.2.0] - unreleased
+## [3.0.0] - 2026-10-29
+
+This release breaks compatibility: the RHT and RCD baselines of 1.x-2.x were
+RANSAC-style adaptations, not the published methods, and are replaced by the
+procedures of their papers under the papers' parameter names.
 
 ### Added
 
-- `cibica.internal_boundary(mask)` returns the morphological internal boundary
-  `A \ (A erode N4)` of a binary mask: a foreground pixel is kept when at least
-  one of its four neighbours is background.
-  It is a set difference with a cross structuring element and no kernel
-  weights, gradient magnitude, orientation, interpolation or tuned parameter,
-  so the marker-localisation pipeline from mask to refined circle uses no image
-  derivative.
-  Border values are replicated, so a marker clipped by the region-of-interest
-  frame does not acquire a straight edge along the frame; away from the frame
-  the set equals scikit-image's `find_boundaries(mask, connectivity=1,
-  mode="inner")`.
-- `extract_edges(mask, edges)` and `EDGE_EXTRACTORS` switch between
-  `"boundary"` (default) and `"canny"`.
-  The same `edges` keyword is on `preprocess_green_level`,
-  `preprocess_median_filter`, `image_to_edge_points`, `estimate`,
-  `run_frame_config_sweep`, `compute_edge_counts`, `preprocessing_throughput`
-  and `cibica.reproduction.main`, and on every `cibica` subcommand as
-  `--edges {boundary,canny}`, so the Canny sensitivity rerun of the article is
-  one argument.
-- `rht_detect_all` and `rcd_detect_all` run the full multi-circle procedures of
-  their papers, with supporting-pixel removal and the parameter-set or
-  failure-counter reset (RHT Steps 8-9, RCD Step 6), and stop after
-  `max_circles` detections when asked.
-- `cibica.study_config.RHT_STUDY_PARAMS` and `RCD_STUDY_PARAMS` hold the
-  thresholds of the companion 3C-FBI study for regions of interest about 50 px
-  across: RHT `delta=2`, `n_t=3`, `k_max=10000`, `d_tol=2`, `m_min=5`; RCD
-  `T_f=10000`, `T_min=4`, `T_a=12`, `T_d=1`, `T_r=0.50`.
-- `tests/test_paper_validation.py` reproduces the worked example of each
-  paper: RHT finds all six broken circles of Xu et al. (1990) Fig. 4(a) on
-  three seeds, and RCD detects the six overlapping circles of Chen & Chung
-  (2001) Fig. 5 without noise and with 100% added noise (1,369 circle pixels
-  plus as many noise points) using the published thresholds.
-  The fixtures are ported from the companion `circle-fitting` repository in
-  `tests/paper_examples.py`, and both detectors return the same circles as
-  that repository's implementations for the same seeds.
-- `tests/test_preprocessing_boundary.py` pins the boundary extractor: a
-  one-pixel ring equal to its set-theoretic definition, equal to scikit-image's
-  inner boundaries when scikit-image is installed, no edge along the frame for
-  a clipped disk, Canny still selectable, and the fit shift below.
-- `cibica.experiments.two_circle` and `scripts/run_two_circle.py` run the
-  second-circular-edge experiment of the round-3 revision (R2.7) on public
-  circle datasets with per-circle ground truth: the calibration patterns and
-  synthetic three-circle set of Patraucean et al. (2017), the GH, PCB and MY
-  sets redistributed by Zhao et al. (2021), and Lu et al.'s (2017) PCB ellipse
-  ground truth as a cross-check.
-  Every annotated circle is taken as the target in turn, a region of side
-  `2 h r_t` is cropped around it with its centre jittered by up to `0.2 r_t`
-  and resampled to the 50 x 50 px of the clinical crops so the target radius
-  lands on 9, 11.5 or 14 px (`h = 25 / r_c`); the one adaptation to images
-  without a green screen is the binary mask, the dark pixels under Otsu's
-  threshold of the grey crop, from which the boundary edge points are given
-  identically to all five methods with the main study's parameters.
-  Per crop the driver records the Jaccard index against the target and the
-  other circles, the distractor factors `s`, `rho` and `q` (share of edge
-  points on the distractor), the target/distractor/neither class, CIBICA's
-  consensus score (share of hypotheses in the modal cell) and the per-axis
-  median consensus variant evaluated on the same triplet hypotheses, so the
-  R2.1 ablation is repeated under a second edge; summary tables give the class
-  proportions per `q` and `s` bin, the paired Hodges-Lehmann contrast with
-  bootstrap interval and Wilcoxon test, the Spearman correlation of the
-  consensus score with `q`, a pure-noise false-positive control and the Zhao
-  versus Lu PCB ground-truth disagreements.
-- `cibica.estimate.cibica_consensus_variants` runs CIBICA's sampling and
-  filtering once and returns both the joint-mode estimate (equal to `CIBICA`)
-  and the per-axis-median estimate (equal to the ablation variant) with the
-  modal cell's weight, so the two consensus rules are compared on identical
-  hypotheses.
-- `cibica.visualization.two_circle.plot_lock_on_vs_q` draws the proportion of
-  target lock-on against `q` per method (Fig. R7 of the revision).
-- `cibica.analysis.per_configuration` and `scripts/run_per_configuration_stats.py`
-  run the manuscript's statistical battery separately in each of the 18
-  preprocessing configurations for each CIBICA-baseline contrast (72
-  contrasts, 144 paired frames each; round-3 R2.4): two-sided Wilcoxon
-  signed-rank test with `W+` and rank-biserial correlation, Hodges-Lehmann
-  estimate with 95% percentile-bootstrap interval (4,000 resamples), paired
-  sign-permutation test on the mean difference (10^6 sign flips), 95% BCa
-  bootstrap interval (10^4 resamples) and the paired beta regression with
-  frame as a blocking factor, with the Wilcoxon and permutation p-values
-  Holm-adjusted over all 72 contrasts.
-  The pooled GL80-GL84 comparison is written alongside as the pre-specified
-  primary analysis and reproduces the focal-test table exactly.
-  Outputs go to `results/stats18/`: `StatsS_PerConfiguration_<tag>.csv` (one
-  row per contrast), `StatsS_PooledReference_<tag>.csv`,
-  `StatsS_PerConfiguration_Summary_<tag>.csv` (per-baseline counts of
-  significantly better / worse / not significant configurations, the
-  Hodges-Lehmann range and the agreement between the Wilcoxon, permutation
-  and BCa decisions), a run-info text file with the wall-clock time, and
-  `FigS_HL_PerConfiguration_<tag>.pdf/.png`
-  (`cibica.visualization.per_configuration.plot_hl_per_configuration`), the
-  Hodges-Lehmann estimate and interval per contrast across the 18
-  configurations with the pooled estimate marked over GL80-GL84.
-  The confirmatory analyses of Appendix A, previously computed outside the
-  package, are now part of it with the manuscript's definitions and no new
-  dependency: `cibica.analysis.sign_permutation` (Monte-Carlo and exhaustive
-  sign-flip tests with the `(1 + count) / (1 + B)` p-value),
-  `cibica.analysis.bca_bootstrap` (vectorised BCa interval with mid-rank bias
-  correction and jackknife acceleration, equal to
-  `scipy.stats.bootstrap(method="BCa")`), `cibica.analysis.beta_regression`
-  (maximum-likelihood beta regression with logit mean and log-link precision
-  from closed-form score and Hessian, the Smithson-Verkuilen transform and
-  the boundary point mass; coefficients and Wald errors agree with
-  `statsmodels.othermod.betareg.BetaModel` to six decimals) and
-  `cibica.analysis.multiple_comparisons.holm_adjust`.
-- `tests/test_per_configuration_stats.py` checks Holm against a hand-computed
-  example and an explicit step-down loop, the Monte-Carlo permutation test
-  against exhaustive enumeration, the BCa interval against
-  `scipy.stats.bootstrap`, the beta regression against a synthetic shift of
-  known size (and against `statsmodels` when installed), the 72-row table's
-  shape, order, Holm family and worker-count invariance, and the figure
-  output.
-- `tests/test_two_circle.py` covers the loaders on one real file per dataset,
-  the crop geometry (target radius exactly 9, 11.5 or 14 px; jitter within
-  `0.2 r_t`), the `q` computation on synthetic two-circle crops, the
-  classifier, the equality of the consensus variants with `CIBICA` and the
-  ablation variant, the scalable Hodges-Lehmann estimator against the
-  pairwise definition, and an end-to-end run on a synthetic dataset.
+- `select` on `rht` and `rcd` (`--select` on the command line), choosing
+  which detection to return, since both papers detect every circle:
+  `"first"` (default, the study's setting and the previous behaviour) stops at
+  the first accepted circle, `"strongest"` runs the published search to its
+  stopping rule (RHT Step 9, RCD Step 6) and returns the detection with the
+  most edge points on it, and `"all"` returns every detection, the papers'
+  own output.
+- RHT and RCD as published: `rht` follows Steps 1-9 of Xu, Oja & Kultanen
+  (1990) and `rcd` Steps 1-6 of Chen & Chung (2001), validated on the worked
+  examples of both papers, and `rht_detect_all` and `rcd_detect_all` run their
+  full multi-circle procedures. `cibica.estimate` and the `cibica` command use
+  thresholds for regions of interest about 50 px across; `cibica.rht` and
+  `cibica.rcd` keep the published defaults.
+- A gradient-free edge extractor, `cibica.internal_boundary`, the
+  morphological internal boundary of the binary mask, which is now the default
+  source of edge points; `edges="canny"` and `--edges canny` select Canny.
+  The reference green-level window follows the extractor
+  (`reference_window(edges)`): GL70-GL74 for the boundary, GL80-GL84 for Canny.
+- The second-circular-edge experiment on public circle datasets
+  (`cibica.experiments.two_circle`, `scripts/run_two_circle.py`), with
+  `scripts/download_two_circle_data.py` to fetch the datasets.
+- The statistical comparison in each of the 18 preprocessing configurations
+  (`cibica.analysis.per_configuration`,
+  `scripts/run_per_configuration_stats.py`), with the sign-permutation test,
+  BCa bootstrap interval, beta regression and Holm adjustment as package
+  modules.
+- `scripts/reproduce_article.py` runs every step of the study in dependency
+  order and records the wall-clock time of each.
+- Per-frame latency: `run_timing_repeats.py` stores the latency of every
+  timed frame (`Table3_Latency_*`) and reports the median, p95 and p99 per
+  method over the kept repeats (`timing_statistics.latency_percentiles`,
+  `pooled_latency`).
+- The selection-free best-configuration mean, `Jaccard_mean_fixed` at
+  `Fixed_Config` in `Table3_BestConfig_*`; `Jaccard_mean` averages each
+  replicate's own best configuration and is biased upward for stochastic
+  methods.
+- Subject-level inference, `Stats_SubjectLevel_*`: Wilcoxon and
+  Hodges-Lehmann over participant means with a cluster-bootstrap interval
+  (`cibica.analysis.subject_level_contrast`).
+- The area under the ROC curve of the consensus score as a two-circle flag,
+  pooled and per dataset, and the median consensus scores, in
+  `TwoCircle_consensus_*` (`two_circle.consensus_auc`).
 
 ### Changed
 
-- The reference window now depends on the edge extractor, never on the fitting
-  method. `cibica.study_config.BEST_GL` is `("GL70", "GL72", "GL74")`, the
-  best three-level window of the boundary extractor for every method;
-  `CANNY_GL = ("GL80", "GL82", "GL84")` is the Canny window of earlier
-  versions; `SHARED_GL = ("GL76", "GL78", "GL80")` is the fixed window that
-  costs either extractor the least (at most 0.005 in mean Jaccard index) for
-  the fixed-preprocessing comparison; `reference_window(edges)` picks the
-  window for a run, and `reproduction.main` passes it to every table, test and
-  figure that pools over the window. `reference_config_indices`,
-  `reference_scores`, `compute_focal_stats`, `pairwise_comparisons` and the
-  table writers take an optional `configs` argument (default `BEST_GL`).
-- The single configuration of the illustrative figures and of the
-  triplet-count experiment (paper Table 6) is `GL72`, the centre of the
-  reference window (`TABLE6_CONFIG`, `FIGURE_CONFIG`); previously `GL80` and
-  `GL82`.
-- Test fixtures include GL70-GL74; the ablation and violin pins follow the new
-  window.
+- The constraint ablation runs on the reference window of the edge extractor
+  (`--edges`, GL70-GL74 for the boundary) instead of the fixed GL80-GL84.
+- The end-to-end rate is derived by `run_timing_repeats.py` from the
+  single-core repeats of preprocessing and CIBICA; `Stats_Throughput_*` from
+  `run_experiment.py` no longer carries an end-to-end rate, which it computed
+  from the fitting time of the parallel sweep.
+- `EdgeCounts_*` stores the edge-point counts behind paper Fig. 11.
+- `image_to_edge_points(method="green_level")`, and so `--preprocess
+  green_level`, defaults to GL72, the centre of the boundary window, instead of
+  GL82, the optimum of the Canny edges.
+- The two-circle and per-configuration figures carry their paper numbers:
+  `Fig18_TwoCircle_LockOnVsQ` (was `FigR7_...`) and
+  `FigA1_HL_PerConfiguration` (was `FigS_HL_...`).
+- `reproduce_article.py` runs the Canny sweep with `--full`, so the Canny
+  consensus ablation is reproduced too.
+- QI scales each iterate to the constraint xi^T N_H xi = 1 of Qi et al. (2024,
+  eq. 5), with A >= 0, instead of A = 1, so the convergence test with
+  epsilon = 1e-6 applies at the scale the paper states it for. It admits
+  eigenvalues down to a relative round-off margin below zero, so an exact
+  solution is no longer always discarded when rounding makes its eigenvalue
+  negative, and it reports a failure and returns no circle instead of raising
+  when no eigenvalue qualifies. With the study's arguments, QI gives
+  bit-identical results to circle-fitting on all 2,592 study cells.
+- The CIBICA consensus function is `joint_mode_3d(x, y, r)`, named for what it
+  returns. `median_3d` remains as a deprecated alias that warns and ignores
+  `xmax`/`ymax`; it will be removed in the next major release.
 
-- **Breaking:** `rht` implements Steps 1-9 of Xu, Oja & Kultanen (1990).
-  Three distinct edge points are drawn without replacement and mapped to a
-  point `(a, b, r)` of a dynamically growing parameter set; a point within
-  tolerance `delta` of an existing cell is merged into it by averaging and
-  incrementing its score, otherwise inserted with score one; a cell reaching
-  `n_t` becomes a candidate, accepted when more than `m_min` edge points lie
-  within `d_tol` of its circle and deleted otherwise; sampling stops at the
-  first accepted circle or after `k_max` samples.
-  The parameters carry these published names with the defaults `delta=2.0`,
-  `n_t=3`, `k_max=10000`, `d_tol=1.0`, `m_min=10`; the former `num_iterations`
-  and `threshold`, and the inlier-count selection they drove, are gone.
-- **Breaking:** `rcd` implements Steps 1-6 of Chen & Chung (2001).
-  Four edge points are drawn; a triplet whose points are pairwise farther apart
-  than `T_a` defines a possible circle only if the fourth point lies within
-  `T_d` of it; the possible circle is accepted when the number of edge points
-  within `T_d` reaches `2*pi*r*T_r`; the search stops after `T_f` consecutive
-  failures or when fewer than `T_min` edge points remain.
-  The defaults are the paper's Section III values `T_f=30000`, `T_min=60`,
-  `T_a=20`, `T_d=1`, `T_r=0.60`; the former `num_iterations`,
-  `distance_threshold`, `min_inliers` and `min_distance` are gone.
-  Two readings of the printed text are fixed in the module docstring: the
-  fourth-point test follows the co-circularity definition (`d <= T_d`) rather
-  than the "larger than" of the printed Step 3, and the four sampled points
-  return to the edge set when a candidate fails the ratio test.
-- Both detectors keep cibica's call contract: edge points as
-  `[[row, col], ...]`, a `rng` generator or seed, and `([x_col, y_row], r)` or
-  the no-circle sentinel in return.
-  `constraints` now act on detections: a verified circle outside the bounds is
-  not returned, its pixels leave the edge set as for any detection, and the
-  search moves on to the next circle; when a bound changes the first
-  detection, that is reported on stderr as before.
-- `estimate()` and the `cibica` command default `rht` and `rcd` to the study
-  thresholds above, because cibica's inputs are ~50 px regions of interest for
-  which the published full-image values are unsuitable (RCD `T_min=60`
-  against a median of 71 boundary points per region over the 2,592 clinical
-  edge images, 14% of them below 60, and `T_a=20` px against a sphere
-  diameter of 19-28 px, which no three points on a circle of diameter 22 can
-  satisfy).
-  `cibica.rht` and `cibica.rcd` keep the published defaults; an explicit
-  keyword overrides either.
-  The command-line options are the papers' names: `--delta`, `--n-t`,
-  `--k-max`, `--d-tol`, `--m-min` and `--t-f`, `--t-min`, `--t-a`, `--t-d`,
-  `--t-r`, replacing `--iterations`, `--threshold`, `--distance-threshold`,
-  `--min-inliers` and `--min-distance`.
-  The frame sweep and the constraint ablation pass the study thresholds
-  explicitly.
-- Edge points come from the internal boundary of the binary mask instead of
-  from Canny on that mask.
-  On a binary step Canny keeps a mixture of pixels just inside and just
-  outside the mask (53% inside on rasterised disks, 49% on the mask over the
-  2,592 clinical edge images), while the internal boundary keeps only the
-  inner ring.
-  On rasterised disks of radius 9-14 px a least-squares circle through the
-  boundary edgels is 0.43 px smaller in radius than one through the Canny
-  edgels (range 0.38-0.49 px over 150 sub-pixel placements) and its centre
-  moves 0.20 px (at most 0.24 px); against the true radius Canny is unbiased
-  within 0.03 px and the boundary is 0.46 px small, as an inner ring must be.
-  On the clinical frames the mask is the green background and the sphere is
-  its hole, so the ring lies on the green side of the step and the fitted
-  radius grows by 0.45 px instead (median over the 144 frames at GL82).
-  Border following (OpenCV `findContours`) returns the identical pixel set on
-  every one of the 2,592 edge images once the frame pixels it adds are
-  excluded.
-- The `Time_RHT` and `Time_RCD` columns of the frame sweep time the published
-  procedures and are not comparable with earlier releases.
+### Fixed
+
+- `reproduce_article.py` failed at `per_configuration` when rerun on another
+  day, because the sweeps' date-tagged tables of both days were present; it
+  now passes the newest run tag to the steps that read them. Its closing
+  summary shows only the current run's steps instead of every run recorded in
+  `Reproduction_Timings_<computer>.csv`.
+- `run_experiment.py --edges canny` computed the triplet sweep (Table 6,
+  Fig. 17) and the qualitative figures (Figs. 15-16) on boundary edges; both
+  now follow `--edges`.
+- The console summary of a Canny run averaged the boundary window and labelled
+  it GL80-GL84; it now uses and names the run's own window. The paper mapping
+  names the right configuration of every figure, the artefacts of the other
+  study scripts and every command that reproduces the article.
 
 ### Removed
 
-- The RANSAC-style RHT and RCD adaptations of 1.x-2.1 and
-  `tests/test_vectorized_estimators.py`, which pinned their vectorised
-  inlier scoring against a scalar reference.
+- **Breaking:** the RANSAC-style RHT and RCD and their parameters
+  `num_iterations`, `threshold`, `distance_threshold`, `min_inliers` and
+  `min_distance`, with the command-line options `--iterations`, `--threshold`,
+  `--distance-threshold`, `--min-inliers` and `--min-distance`.
+  Use `--delta`, `--n-t`, `--k-max`, `--d-tol` and `--m-min` for RHT and
+  `--t-f`, `--t-min`, `--t-a`, `--t-d` and `--t-r` for RCD.
 
 ## [2.1.0] - 2026-07-31
 

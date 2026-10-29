@@ -29,7 +29,10 @@ __all__ = [
     "MODIFIED_Z_THRESHOLD",
     "flag_slow_outliers",
     "format_measurement",
+    "latency_percentiles",
     "modified_z_scores",
+    "pooled_end_to_end",
+    "pooled_latency",
     "summarise_repeats",
 ]
 
@@ -49,7 +52,7 @@ def modified_z_scores(values) -> np.ndarray:
     mad = np.median(np.abs(values - median))
     if mad == 0:
         return np.zeros_like(values)
-    return _MAD_TO_SIGMA * (values - median) / mad
+    return np.asarray(_MAD_TO_SIGMA * (values - median) / mad, dtype=float)
 
 
 def flag_slow_outliers(values) -> np.ndarray:
@@ -89,6 +92,95 @@ def summarise_repeats(values, *, ci_level: float = _DEFAULT_CI_LEVEL) -> dict:
         "ci_lo": mean - half,
         "ci_hi": mean + half,
         "cv_pct": 100.0 * std / mean if mean else 0.0,
+    }
+
+
+def latency_percentiles(milliseconds, percentiles=(50, 95, 99)) -> dict:
+    """Median and tail of a pooled sample of per-frame latencies.
+
+    A throughput figure is a mean and hides the slow frames that decide whether
+    a real-time deadline is met, so the latency of every timed frame is
+    summarised by its median and upper percentiles as well.
+
+    Args:
+        milliseconds: Per-frame latencies, pooled over the kept repeats.
+        percentiles: Percentiles to report; the default gives the median,
+            p95 and p99.
+
+    Returns:
+        dict: ``n``, ``median_ms``, ``p95_ms``, ``p99_ms`` (one ``p<q>_ms`` per
+        percentile other than 50) and ``max_ms``.
+    """
+    values = np.asarray(milliseconds, dtype=float)
+    if values.size == 0:
+        raise ValueError("need at least one latency to summarise")
+    out: dict = {"n": int(values.size)}
+    for q in percentiles:
+        key = "median_ms" if q == 50 else f"p{q}_ms"
+        out[key] = float(np.percentile(values, q))
+    out["max_ms"] = float(values.max())
+    return out
+
+
+def pooled_latency(latencies_by_repeat, rates) -> dict:
+    """Pool per-frame latencies over the repeats kept by the rate screen.
+
+    A repeat that :func:`flag_slow_outliers` discards for its rate was slowed
+    by contention in every frame, so all its frames leave the pool too.
+
+    Args:
+        latencies_by_repeat: One array of per-frame latencies (ms) per repeat.
+        rates: The repeats' rates, in the same order, used for screening.
+
+    Returns:
+        dict: :func:`latency_percentiles` of the pooled frames, plus
+        ``n_excluded`` repeats.
+    """
+    rates = np.asarray(rates, dtype=float)
+    if len(latencies_by_repeat) != rates.size:
+        raise ValueError("need one latency vector per repeat")
+    keep = ~flag_slow_outliers(rates)
+    pooled = np.concatenate(
+        [np.asarray(v, dtype=float) for v, k in zip(latencies_by_repeat, keep) if k]
+    )
+    return {**latency_percentiles(pooled), "n_excluded": int((~keep).sum())}
+
+
+def pooled_end_to_end(preprocessing_rates, fitting_rates) -> dict:
+    """Derived serial end-to-end rate from two sets of single-core repeats.
+
+    Each stage is screened with :func:`flag_slow_outliers` and pooled; the two
+    stages run in series, so their mean latencies add. The rate from the
+    fastest repeat of each stage is returned alongside.
+
+    Args:
+        preprocessing_rates: Edge-images per second, one per repeat.
+        fitting_rates: Circle fits per second, one per repeat.
+
+    Returns:
+        dict: ``end_to_end_fps`` (from the kept means),
+        ``end_to_end_fps_fastest``, the stage means and the number of
+        repeats discarded from each stage.
+    """
+    from cibica.analysis.preprocessing_throughput import end_to_end_fps
+
+    pre = np.asarray(preprocessing_rates, dtype=float)
+    fit = np.asarray(fitting_rates, dtype=float)
+    pre_keep = ~flag_slow_outliers(pre)
+    fit_keep = ~flag_slow_outliers(fit)
+    pre_mean = float(pre[pre_keep].mean())
+    fit_mean = float(fit[fit_keep].mean())
+    mean = end_to_end_fps(1_000.0 / pre_mean, fit_mean)
+    fastest = end_to_end_fps(1_000.0 / float(pre.max()), float(fit.max()))
+    return {
+        "preprocessing_mean": pre_mean,
+        "fitting_mean": fit_mean,
+        "ms_preprocessing": mean["ms_preprocessing"],
+        "ms_fitting": mean["ms_fitting"],
+        "end_to_end_fps": mean["end_to_end_fps"],
+        "end_to_end_fps_fastest": fastest["end_to_end_fps"],
+        "n_excluded_preprocessing": int((~pre_keep).sum()),
+        "n_excluded_fitting": int((~fit_keep).sum()),
     }
 
 

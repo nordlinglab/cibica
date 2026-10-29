@@ -21,8 +21,10 @@ import numpy as np
 import pandas as pd
 
 from cibica.analysis.leave_one_subject_out import leave_one_subject_out
-from cibica.analysis.per_subject_statistics import per_subject_statistics
-from cibica.analysis.preprocessing_throughput import end_to_end_fps
+from cibica.analysis.per_subject_statistics import (
+    per_subject_statistics,
+    subject_level_contrast,
+)
 from cibica.analysis.study_summaries import (
     best_config_stats,
     reference_config_indices,
@@ -56,6 +58,7 @@ def save_summary_tables(results, output_dir=".", tag="", configs=None):
       preprocessing configuration). With replicates>1 ``Best_Config`` is the set
       of configs selected as best in at least one replicate; Jaccard and FPS are
       means over replicates and ``Jaccard_repl_std`` is the run-to-run std.
+      ``Jaccard_mean_fixed`` is the selection-free mean at ``Fixed_Config``.
     - Table4_CrossConfig -> paper Table 4 (best-config mean vs all-config mean).
     - Summary_AllConfigs / Summary_BestGL -> supporting (not numbered tables in
       the paper); the reference-window scores underlie the statistical comparison.
@@ -71,6 +74,8 @@ def save_summary_tables(results, output_dir=".", tag="", configs=None):
             "Jaccard_mean": round(bcs[m]["jaccard_mean"], 4),
             "Jaccard_std": round(bcs[m]["jaccard_std"], 4),
             "Jaccard_repl_std": round(bcs[m]["jaccard_repl_std"], 4),
+            "Fixed_Config": bcs[m]["fixed_config"],
+            "Jaccard_mean_fixed": round(bcs[m]["jaccard_mean_fixed"], 4),
             "FPS": round(bcs[m]["fps"], 1),
             "Frac_declined": round(bcs[m]["declined"], 4),
             "Frac_zero": round(bcs[m]["zeros"], 4),
@@ -121,7 +126,7 @@ def save_summary_tables(results, output_dir=".", tag="", configs=None):
     )
     print(f"  Saved: Summary_AllConfigs_{tag}.csv  (supporting)")
 
-    # Supporting: per-method mean over GL80/GL82/GL84 (scores used by the stats).
+    # Supporting: per-method mean over the reference window (used by the stats).
     rows = []
     for m in METHODS:
         jaccard = results[f"Jaccard_{m}"][:, best_idx]
@@ -162,9 +167,10 @@ def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA", configs
 
     Frames are clustered within participants (18 participants x 8 frames), so
     a cohort split over PD/control cannot show whether one participant carries
-    the result. Writes three CSVs: per-subject means for every method, the
-    per-subject mean of the focal method, and the leave-one-subject-out range
-    of the focal-minus-baseline improvement.
+    the result. Writes four CSVs: per-subject means for every method, the
+    per-subject mean of the focal method, the leave-one-subject-out range
+    of the focal-minus-baseline improvement, and the subject-level contrast
+    (Wilcoxon and Hodges-Lehmann over participant means, cluster bootstrap).
 
     Returns:
         dict: The per-method ``per_subject_statistics`` summaries, keyed by
@@ -220,32 +226,66 @@ def save_subject_tables(results, output_dir=".", tag="", focal="CIBICA", configs
         os.path.join(output_dir, f"Stats_LeaveOneSubjectOut_{tag}.csv")
     )
     print(f"  Saved: Stats_LeaveOneSubjectOut_{tag}.csv  (focal: {focal})")
+
+    rows = []
+    for method in METHODS:
+        if method == focal:
+            continue
+        contrast = subject_level_contrast(scores[focal], scores[method], subjects)
+        rows.append(
+            {
+                "Baseline": method,
+                **{
+                    key: round(value, 4) if isinstance(value, float) else value
+                    for key, value in contrast.items()
+                    if key not in ("p_wilcoxon",)
+                },
+                "p_wilcoxon": contrast["p_wilcoxon"],
+            }
+        )
+    pd.DataFrame(rows).set_index("Baseline").to_csv(
+        os.path.join(output_dir, f"Stats_SubjectLevel_{tag}.csv")
+    )
+    print(f"  Saved: Stats_SubjectLevel_{tag}.csv  (one difference per participant)")
     return summaries
 
 
 def save_throughput_table(
     results, throughput, output_dir=".", tag="", focal="CIBICA", configs=None
 ):
-    """Combine a preprocessing measurement with the fitting time and write it.
+    """Write the preprocessing measurement taken before the sweep.
 
-    The sweep times only the estimator call, so ``throughput`` must come from a
-    separate measurement taken before the sweep loaded the machine (see
-    :mod:`cibica.experiments.preprocessing_throughput`).
+    The sweep times the estimator with one worker per performance core, which
+    reads up to about 40% below the single-core rate, so its fitting time is not
+    combined with this measurement here. The reported end-to-end rate is
+    derived by ``scripts/run_timing_repeats.py`` from the screened single-core
+    repeats of both stages (see
+    :func:`cibica.analysis.timing_statistics.pooled_end_to_end`).
+    ``results``, ``focal`` and ``configs`` are accepted for call compatibility.
 
     Returns:
-        dict: ``throughput`` merged with the ``end_to_end_fps`` breakdown.
+        dict: ``throughput`` unchanged.
     """
-    best_idx = reference_config_indices(results, configs)
-    fit_s = float(results[f"Time_{focal}"][:, best_idx].mean())
-    e2e = end_to_end_fps(
-        throughput["ms_per_edge_image"], 1.0 / fit_s if fit_s > 0 else 1.0
-    )
-
-    pd.DataFrame([{**throughput, **e2e, "fitting_method": focal}]).to_csv(
+    pd.DataFrame([throughput]).to_csv(
         os.path.join(output_dir, f"Stats_Throughput_{tag}.csv"), index=False
     )
     print(f"  Saved: Stats_Throughput_{tag}.csv")
-    return {**throughput, **e2e}
+    return dict(throughput)
+
+
+def save_edge_counts_table(results, output_dir=".", tag=""):
+    """Write the edge-point count of every frame and configuration.
+
+    Paper Fig. 11 is drawn from these counts; storing them keeps the numbers
+    the manuscript quotes from the figure (edge points and triplet
+    combinations per frame) in a table.
+    """
+    table = pd.DataFrame(
+        results["edge_counts"].astype(int), columns=results["config_names"]
+    )
+    table.insert(0, "Filename", results["filenames"])
+    table.to_csv(os.path.join(output_dir, f"EdgeCounts_{tag}.csv"), index=False)
+    print(f"  Saved: EdgeCounts_{tag}.csv  (paper Fig. 11 counts)")
 
 
 def save_cohort_table(results, cohort_path, output_dir=".", tag="", configs=None):
@@ -287,5 +327,6 @@ __all__ = [
     "save_stats_csvs",
     "save_subject_tables",
     "save_summary_tables",
+    "save_edge_counts_table",
     "save_throughput_table",
 ]

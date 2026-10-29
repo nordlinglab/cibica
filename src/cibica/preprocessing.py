@@ -5,7 +5,7 @@
 Stage 1 of the marker-localisation pipeline produces a *binary* mask by HSV
 thresholding, optionally after a median blur; both are pointwise or rank-based
 operations with no derivative. Stage 2 turns that mask into edge points. Since
-cibica 2.2.0 the default edge extractor is the morphological internal boundary
+cibica 3.0.0 the default edge extractor is the morphological internal boundary
 :func:`internal_boundary`, a set difference on the mask that uses no image
 gradient, so stages 1-5 of the pipeline are gradient-free. The Canny detector
 that preceded it is kept selectable (``edges="canny"``) for the sensitivity
@@ -24,9 +24,18 @@ _N4 = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
 
 def auto_canny(image, sigma=0.33):
     """
-    Auto threshold Canny edge detector.
+    Canny edge detector of OpenCV with thresholds from the image median.
 
-    Automatically determines thresholds based on image median.
+    The detector is OpenCV's ``cv2.Canny`` with its defaults: a 3x3 Sobel
+    gradient with the L1 magnitude, non-maximum suppression and hysteresis
+    between ``lower`` and ``upper``. It is not the detector of Canny (1986):
+    there is no Gaussian smoothing, and the thresholds come from a fixed
+    fraction ``sigma`` around the median intensity, not from an estimate of
+    the noise in the operator output.
+
+    On a 0/255 binary mask the median is 0, 127.5 or 255, and the gradient of
+    every mask step exceeds the resulting ``upper``, so the output does not
+    depend on the thresholds; it is the non-maximum-suppressed Sobel edge.
 
     Parameters
     ----------
@@ -95,11 +104,15 @@ def extract_edges(mask, edges="boundary"):
     edges : str
         ``"boundary"`` (default) applies :func:`internal_boundary`, the
         gradient-free extractor the study uses. ``"canny"`` applies
-        :func:`auto_canny`, kept for the article's sensitivity analysis. On a
-        binary step Canny's non-maximum suppression keeps a mixture of pixels
-        just inside and just outside the mask, whereas the internal boundary
-        keeps only the inner ring, so Canny yields a slightly larger circle
-        (a few tenths of a pixel in radius on 9-14 px disks).
+        :func:`auto_canny`, OpenCV's ``cv2.Canny``, kept for the article's
+        sensitivity analysis. On a binary step Canny's non-maximum
+        suppression keeps a mixture of pixels just inside and just outside
+        the mask, whereas the internal boundary keeps only the ring inside the
+        mask. A circle fitted to Canny edges is therefore 0.4-0.5 px larger
+        in radius when the mask is the disk, and 0.4-0.5 px smaller when the
+        mask is the background around a dark disk, as for the
+        green-background masks of :func:`preprocess_green_level` and
+        :func:`preprocess_median_filter` (9-14 px disks).
 
     Returns
     -------
@@ -264,7 +277,7 @@ def get_preprocessing_configs():
 def image_to_edge_points(
     img,
     method="canny",
-    green_level=82,
+    green_level=72,
     median_size=11,
     green_ref=None,
     sigma=0.33,
@@ -284,7 +297,8 @@ def image_to_edge_points(
     method : str
         Preprocessing strategy:
 
-        - ``"canny"`` (default): grayscale + automatic Canny edge detection.
+        - ``"canny"`` (default): grayscale + OpenCV's ``cv2.Canny`` with
+          median-based thresholds (:func:`auto_canny`).
           Works on any image and makes no assumption about colour; it is the
           only strategy that runs a gradient operator, because a grayscale
           photograph has no binary mask to take a boundary of.
@@ -295,7 +309,8 @@ def image_to_edge_points(
           green background reference image via ``green_ref`` (see
           :func:`preprocess_median_filter`).
     green_level : int
-        Green threshold for ``method="green_level"`` (default: 82).
+        Green threshold for ``method="green_level"`` (default: 72, the centre
+        of the reference window of the boundary extractor).
     median_size : int
         Median kernel size for ``method="median_filter"`` (default: 11).
     green_ref : numpy.ndarray, optional

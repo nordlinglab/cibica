@@ -150,23 +150,44 @@ class TestQiDegeneracy:
 
         from cibica.estimators.qi import qi_2024
 
-        # A noiseless circle makes the generalised eigenproblem
-        # ill-conditioned, and the unguarded solution blows up to a radius of
-        # order 1e14, which must be reported as no circle rather than returned.
-        t = np.linspace(0, 2 * np.pi, 120, endpoint=False)
-        pts = np.column_stack([12 + 7 * np.sin(t), 40 + 7 * np.cos(t)])
-        center, r = qi_2024(pts)
+        # Collinear points have no finite circle, and the unguarded solution
+        # blows up to a radius of order 1e15, which must be reported as no
+        # circle rather than returned.
+        line = np.column_stack([np.arange(20.0), np.arange(20.0) * 0.5 + 3])
+        center, r = qi_2024(line)
         assert is_no_circle(r) and np.isnan(center).all()
         assert "cibica:degenerate" in capsys.readouterr().err
 
-    def test_collinear_points_do_not_return_a_circle(self):
+    def test_noiseless_circle_is_fitted_exactly(self):
+        """The exact solution's eigenvalue is zero up to round-off."""
         import numpy as np
 
         from cibica.estimators.qi import qi_2024
 
-        line = np.column_stack([np.arange(20.0), np.arange(20.0) * 0.5 + 3])
-        _, r = qi_2024(line)
-        assert is_no_circle(r)
+        t = np.linspace(0, 2 * np.pi, 120, endpoint=False)
+        pts = np.column_stack([12 + 7 * np.sin(t), 40 + 7 * np.cos(t)])
+        center, r = qi_2024(pts)
+        assert r == pytest.approx(7.0)
+        assert center == pytest.approx([40.0, 12.0])
+
+    def test_normalization_follows_the_paper_constraint(self):
+        """Each iterate satisfies xi^T N_H xi = 1 (Qi et al. 2024, eq. 5)."""
+        import numpy as np
+
+        from cibica.estimators.qi import (
+            _create_constraint_matrix,
+            _create_design_matrix,
+            _normalize,
+        )
+
+        t = np.linspace(0, 2 * np.pi, 30, endpoint=False)
+        design = _create_design_matrix(
+            np.column_stack([5 + 3 * np.sin(t), 4 + 3 * np.cos(t)])
+        )
+        n_h = _create_constraint_matrix(design)
+        xi = _normalize(-2.5 * np.array([1.0, -8.0, -10.0, 32.0]), n_h)
+        assert xi @ n_h @ xi == pytest.approx(1.0)
+        assert xi[0] > 0
 
     def test_real_shaped_input_still_fits(self):
         """The guard must not reject an ordinary noisy circle."""
@@ -267,3 +288,57 @@ class TestConstraints:
         assert "constraints" not in inspect.signature(qi_2024).parameters
         for fn in (rht, rcd):
             assert "constraints" in inspect.signature(fn).parameters
+
+
+def test_subject_level_contrast_tests_one_difference_per_participant():
+    """Frames are clustered in participants, so inference uses subject means."""
+    from cibica.analysis import subject_level_contrast
+
+    subjects = np.repeat(["a", "b", "c", "d", "e", "f"], 4)
+    baseline = np.full(subjects.size, 0.80)
+    # Subject differences 0.01..0.06; every participant favours the focal method.
+    focal = baseline + np.repeat(np.arange(1, 7) / 100.0, 4)
+    out = subject_level_contrast(focal, baseline, subjects, n_boot=500, seed=1)
+    assert out["n_subjects"] == 6
+    assert out["n_better"] == 6 and out["n_worse"] == 0
+    assert out["mean_diff"] == pytest.approx(0.035)
+    assert out["HL"] == pytest.approx(0.035)
+    assert out["W_plus"] == 21.0
+    # Exact two-sided signed-rank p for six positive differences: 2 / 2**6.
+    assert out["p_wilcoxon"] == pytest.approx(2 / 64)
+    assert 0.01 <= out["boot_CI_lo"] <= out["mean_diff"] <= out["boot_CI_hi"] <= 0.06
+
+
+def test_subject_level_bootstrap_resamples_participants_not_frames():
+    from cibica.analysis import subject_level_contrast
+
+    subjects = np.repeat(["a", "b"], 3)
+    focal = np.array([0.9, 0.9, 0.9, 0.7, 0.7, 0.7])
+    baseline = np.full(6, 0.8)
+    out = subject_level_contrast(focal, baseline, subjects, n_boot=200, seed=0)
+    # Resampling two participants can only give means of 0.1, 0.0 or -0.1.
+    assert out["boot_CI_lo"] == pytest.approx(-0.1)
+    assert out["boot_CI_hi"] == pytest.approx(0.1)
+
+
+class TestJointMode:
+    """The CIBICA consensus is a joint mode, and its name says so."""
+
+    def test_returns_the_most_frequent_rounded_triple(self):
+        import numpy as np
+
+        from cibica import joint_mode_3d
+
+        x = np.array([10.2, 9.9, 30.0, 10.1])
+        y = np.array([20.1, 19.8, 5.0, 20.4])
+        r = np.array([7.1, 6.8, 2.0, 7.2])
+        assert joint_mode_3d(x, y, r) == (10.0, 20.0, 7.0)
+
+    def test_median_3d_is_a_deprecated_alias(self):
+        import numpy as np
+
+        from cibica import joint_mode_3d, median_3d
+
+        x, y, r = np.array([1.0, 1.0, 4.0]), np.array([2.0, 2.0, 5.0]), np.ones(3)
+        with pytest.warns(DeprecationWarning, match="joint_mode_3d"):
+            assert median_3d(x, y, r, 50, 50) == joint_mode_3d(x, y, r)

@@ -1,10 +1,11 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""Options shared by every subcommand, and the cross-option validation.
+"""Options shared by the estimating subcommands, and the cross-option validation.
 
-:func:`add_common_options` is applied to all six subcommands so input handling,
-output selection, preprocessing, parallelism, and quiet mode behave identically
-whichever method is chosen.
+:func:`add_common_options` is applied to the five methods and ``compare`` so
+input handling, output selection, preprocessing, parallelism, and quiet mode
+behave identically whichever method is chosen; ``histogram`` reads stored data
+and has its own options.
 
 :func:`validate_args` holds the checks that relate two or more options and so
 cannot be expressed as an argparse ``type``. Each calls ``parser.error``, which
@@ -56,6 +57,7 @@ METHOD_KWARGS = {
             ("k_max", a.k_max),
             ("d_tol", a.d_tol),
             ("m_min", a.m_min),
+            ("select", a.select),
         )
         if v is not None
     },
@@ -67,6 +69,7 @@ METHOD_KWARGS = {
             ("T_a", a.t_a),
             ("T_d", a.t_d),
             ("T_r", a.t_r),
+            ("select", a.select),
         )
         if v is not None
     },
@@ -76,12 +79,19 @@ METHOD_KWARGS = {
 }
 
 
-def add_common_options(p: argparse.ArgumentParser) -> None:
-    """Add the options every subcommand accepts."""
+def add_common_options(p: argparse.ArgumentParser, *, points: bool = True) -> None:
+    """Add the options every subcommand accepts.
+
+    ``points=False`` documents an image-only subcommand (``hough``).
+    """
     p.add_argument(
         "input",
         nargs="+",
-        help="image file(s), or edge-point file(s) (.csv/.txt/.npy)",
+        help=(
+            "image file(s), or edge-point file(s) (.csv/.txt/.npy)"
+            if points
+            else "image file(s); edge-point files are rejected"
+        ),
     )
     p.add_argument(
         "-o",
@@ -90,13 +100,15 @@ def add_common_options(p: argparse.ArgumentParser) -> None:
         help="save result; format inferred from extension "
         "(.json, .csv/.txt, .pdf/.svg for a vector overlay — the default "
         "when no extension is given — or a raster image for a 10x-upscaled "
-        "overlay)",
+        "overlay); several inputs share one data file but get one overlay "
+        "each, named FILE_001_<input stem>, FILE_002_..., and so on",
     )
     p.add_argument(
         "--preprocess",
         choices=["canny", "green_level", "median_filter"],
         default="canny",
-        help="image-to-edge-points strategy; ignored for hough and edge-point input",
+        help="image-to-edge-points strategy (canny: OpenCV's cv2.Canny on the "
+        "grayscale image); ignored for hough and edge-point input",
     )
     p.add_argument(
         "--edges",
@@ -104,7 +116,7 @@ def add_common_options(p: argparse.ArgumentParser) -> None:
         default="boundary",
         help="edge extractor for the binary mask of green_level and "
         "median_filter: the gradient-free morphological internal boundary, or "
-        "Canny for the sensitivity analysis; ignored otherwise",
+        "OpenCV's cv2.Canny for the sensitivity analysis; ignored otherwise",
     )
     p.add_argument(
         "--green-ref",
@@ -122,20 +134,23 @@ def add_common_options(p: argparse.ArgumentParser) -> None:
         "--jobs",
         type=nonnegative_int,
         default=0,
+        metavar="N",
         help="worker processes for multiple inputs (0 = one per performance core, "
         "1 = sequential)",
     )
     p.add_argument(
         "--seed",
         type=nonnegative_int,
-        help="seed stochastic methods; sequence results are independent of "
-        "--jobs (default: unseeded, so repeated runs differ)",
+        metavar="N",
+        help="seed the stochastic methods (cibica, rht, rcd); sequence results "
+        "are independent of --jobs (default: unseeded, so repeated runs differ)",
     )
     p.add_argument(
         "-q",
         "--quiet",
         action="store_true",
-        help="suppress the diagnostic header on stderr",
+        help="suppress the diagnostics on stderr (header, saved paths, "
+        "colours and notes); errors are still reported",
     )
 
 

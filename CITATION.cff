@@ -12,7 +12,7 @@ abstract: >-
   Reference implementation of CIBICA, a gradient-free combinatorial circle
   estimation method for low-resolution, motion-blurred clinical video, together
   with classical and robust baselines (Circle Hough Transform, Randomized Hough
-  Transform, Random Circle Detection, robust algebraic fitting), the 18
+  Transform, Randomized Circle Detection, robust algebraic fitting), the 18
   preprocessing configurations, the Jaccard-based evaluation, the nonparametric
   statistical comparison, and the scripts that regenerate every figure and
   table in the accompanying manuscript.
@@ -27,8 +27,8 @@ authors:
     orcid: "https://orcid.org/0000-0003-4867-6707"
     affiliation: "Department of Mechanical Engineering, National Cheng Kung University, Tainan, Taiwan"
     email: torbjorn.nordling@nordlinglab.org
-version: "2.2.0"
-date-released: "2026-07-31"
+version: "3.0.0"
+date-released: "2026-10-29"
 license: Apache-2.0
 repository-code: "https://github.com/nordlinglab/cibica"
 doi: "10.5281/zenodo.20790415"

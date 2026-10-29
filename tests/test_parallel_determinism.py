@@ -401,6 +401,7 @@ def test_constraint_ablation_frame_results_are_independent_of_order():
             y_ground_truth=y,
             r_ground_truth=r,
             green_levels=(80,),
+            edges="boundary",
             replicates=1,
             seed=SEED,
             report_constraints=False,

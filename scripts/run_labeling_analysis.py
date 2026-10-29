@@ -92,8 +92,9 @@ if __name__ == "__main__":
         "--compare-passes",
         action="store_true",
         help=(
-            "additionally report the repeat-labeling (A vs B) disagreement per "
-            "frame: radius, centre distance, and Jaccard index"
+            "additionally compare the two passes (repeat labeling, A vs B): "
+            "add their Jaccard percentiles to Table 1 and print the mean "
+            "per-frame Jaccard index between them"
         ),
     )
     parser.add_argument(

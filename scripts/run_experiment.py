@@ -95,8 +95,9 @@ if __name__ == "__main__":
         metavar="DIR",
         help=(
             "output root directory; tables and figures are written to DIR/tables "
-            "and DIR/figures (default: ./results; specifying DIR overrides seeded "
-            "default filename tags)"
+            "and DIR/figures (default: ./results). Table names end in "
+            "_<COMPUTER>_<SEED> with --seed and the default root, and in "
+            "_YYYYMMDD otherwise, including whenever DIR is given"
         ),
     )
     parser.add_argument(
@@ -104,9 +105,9 @@ if __name__ == "__main__":
         choices=("boundary", "canny"),
         default="boundary",
         help=(
-            "edge extractor applied to the binary mask: the morphological "
-            "internal boundary (default, gradient-free) or Canny, kept for the "
-            "sensitivity analysis of the round-3 revision"
+            "edge extractor applied to the binary mask: the gradient-free "
+            "morphological internal boundary, or OpenCV's cv2.Canny, kept for the "
+            "edge-extractor sensitivity analysis (paper Table A2)"
         ),
     )
     arguments = parser.parse_args()

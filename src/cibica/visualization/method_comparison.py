@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Main-text figures comparing the five methods at the reference configurations.
 
-- :func:`plot_violin` --- paper Fig. 13 at GL82, and supplementary Fig. S2 when
+- :func:`plot_violin` --- paper Fig. 13 at GL72, and supplementary Fig. S2 when
   passed the three reference green levels instead.
 - :func:`plot_pairwise_heatmap` --- paper Fig. 14 (pairwise Wilcoxon p-values).
 

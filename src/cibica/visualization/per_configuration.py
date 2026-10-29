@@ -8,9 +8,10 @@ Med3-Med19), the Hodges-Lehmann estimate of the paired Jaccard difference
 with its 95% interval on the y axis. A filled marker is a contrast whose
 Wilcoxon p-value stays below 0.05 after Holm adjustment over all 72
 contrasts, a hollow one is not, so significance is read from the mark and
-not from its colour. The pooled GL80-GL84 estimate of the primary analysis,
-when given, is drawn as a horizontal segment with its interval over those
-three configurations.
+not from its colour. The pooled estimate of the primary analysis, when given,
+is drawn as a horizontal segment with its interval over the configurations of
+the reference window (GL70-GL74 for the default boundary extractor), and the
+legend names that window.
 
 The figure consumes the table written by
 :func:`cibica.analysis.per_configuration.per_configuration_table`, so it
@@ -43,10 +44,11 @@ def plot_hl_per_configuration(
     date_tag: str = "",
     *,
     pooled: pd.DataFrame | None = None,
+    window: Sequence[str] = BEST_GL,
     baselines: Sequence[str] = BASELINES,
     progress=print,
 ) -> list[str]:
-    """Figure S (R2.4) --- Hodges-Lehmann estimate and interval per contrast.
+    """Paper Fig. A1 --- Hodges-Lehmann estimate and interval per contrast.
 
     Args:
         table: Per-contrast table with ``config``, ``baseline``, ``HL``,
@@ -54,7 +56,10 @@ def plot_hl_per_configuration(
         output_dir: Directory for the ``.png``/``.pdf`` outputs.
         date_tag: Optional suffix appended to the filename.
         pooled: Pooled reference rows (one per baseline) with the same
-            estimate columns; drawn over the configurations in ``pooled_span``.
+            estimate columns; drawn over the configurations of ``window``.
+        window: Reference window the pooled rows average over, as passed to
+            :func:`cibica.analysis.per_configuration.pooled_reference_table`;
+            it places the band and names it in the legend.
         baselines: Baselines to draw, one panel each, in this order.
         progress: Callable used for status output.
 
@@ -64,7 +69,7 @@ def plot_hl_per_configuration(
     apply_publication_style()
     configs = list(dict.fromkeys(table["config"]))
     x = np.arange(len(configs))
-    pooled_span = [i for i, c in enumerate(configs) if c in BEST_GL]
+    pooled_span = [i for i, c in enumerate(configs) if c in window]
     family_break = next(
         (i for i, c in enumerate(configs) if not c.startswith("GL")), None
     )
@@ -156,7 +161,11 @@ def plot_hl_per_configuration(
     ]
     if pooled is not None and pooled_span:
         handles.append(
-            Patch(facecolor="0.5", alpha=0.3, label="pooled GL80–GL84 (primary)")
+            Patch(
+                facecolor="0.5",
+                alpha=0.3,
+                label=f"pooled {window[0]}–{window[-1]} (primary)",
+            )
         )
     fig.legend(
         handles=handles,
@@ -171,7 +180,7 @@ def plot_hl_per_configuration(
     suffix = f"_{date_tag}" if date_tag else ""
     paths = []
     for ext in (".png", ".pdf"):
-        path = os.path.join(output_dir, f"FigS_HL_PerConfiguration{suffix}{ext}")
+        path = os.path.join(output_dir, f"FigA1_HL_PerConfiguration{suffix}{ext}")
         fig.savefig(path)
         paths.append(path)
     plt.close(fig)

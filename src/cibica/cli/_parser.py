@@ -73,7 +73,9 @@ def _add_hough(sub) -> None:
         help="Circle Hough Transform (Duda & Hart 1972)",
         formatter_class=DefaultsHelpFormatter,
     )
-    add_common_options(p)
+    # The transform runs on the raster image itself, so --preprocess, --edges
+    # and --green-ref have no effect and edge-point input is rejected.
+    add_common_options(p, points=False)
     p.add_argument(
         "--param2",
         type=positive_int,
@@ -136,7 +138,8 @@ def _add_rht(sub) -> None:
         type=positive_int,
         default=int(RHT_STUDY_PARAMS["k_max"]),
         metavar="N",
-        help="maximum random triplets before giving up (Step 7)",
+        help="random triplets drawn without a detection before giving up; "
+        "the count restarts after each detection (Step 7)",
     )
     p.add_argument(
         "--d-tol",
@@ -152,6 +155,15 @@ def _add_rht(sub) -> None:
         metavar="N",
         help="a candidate is a circle when more than this many edge points lie "
         "on it (Step 8)",
+    )
+
+    p.add_argument(
+        "--select",
+        choices=("first", "strongest"),
+        default="first",
+        help="which detected circle to return, a rule cibica adds because the "
+        "paper returns every circle: the first accepted, or the one with the "
+        "most edge points once the published search has run to its end (slower)",
     )
 
 
@@ -203,6 +215,15 @@ def _add_rcd(sub) -> None:
         "points lie on it (T_r)",
     )
 
+    p.add_argument(
+        "--select",
+        choices=("first", "strongest"),
+        default="first",
+        help="which detected circle to return, a rule cibica adds because the "
+        "paper returns every circle: the first accepted, or the one with the "
+        "most edge points once the published search has run to its end (slower)",
+    )
+
 
 def _add_qi(sub) -> None:
     p = sub.add_parser(
@@ -224,7 +245,7 @@ def _add_compare(sub) -> None:
     p = sub.add_parser(
         "compare",
         help="run several methods (each with its defaults) and overlay "
-        "their circles in one figure",
+        "their circles, one figure per input",
         formatter_class=DefaultsHelpFormatter,
     )
     add_common_options(p)
@@ -254,7 +275,8 @@ def _add_histogram(sub) -> None:
         "--output",
         default="Fig8_JaccardDistribution.pdf",
         metavar="FILE",
-        help="output figure; the extension selects the format",
+        help="output figure, whose path is printed on stdout; the extension "
+        "selects the format, PDF when there is none",
     )
     p.add_argument(
         "--column",
@@ -267,12 +289,23 @@ def _add_histogram(sub) -> None:
         metavar="TEXT",
         help="heading above the axes (default: none, as the manuscript prints it)",
     )
-    p.add_argument("--xlabel", default=JACCARD_DISTRIBUTION_XLABEL, metavar="TEXT")
     p.add_argument(
-        "--ylabel-left", default=JACCARD_DISTRIBUTION_YLABEL_LEFT, metavar="TEXT"
+        "--xlabel",
+        default=JACCARD_DISTRIBUTION_XLABEL,
+        metavar="TEXT",
+        help="abscissa label",
     )
     p.add_argument(
-        "--ylabel-right", default=JACCARD_DISTRIBUTION_YLABEL_RIGHT, metavar="TEXT"
+        "--ylabel-left",
+        default=JACCARD_DISTRIBUTION_YLABEL_LEFT,
+        metavar="TEXT",
+        help="label of the frequency axis on the left",
+    )
+    p.add_argument(
+        "--ylabel-right",
+        default=JACCARD_DISTRIBUTION_YLABEL_RIGHT,
+        metavar="TEXT",
+        help="label of the cumulative-percentage axis on the right",
     )
     p.add_argument(
         "--font-size",
@@ -298,7 +331,13 @@ def _add_histogram(sub) -> None:
         metavar="IN",
         help="figure height in inches",
     )
-    p.add_argument("--bins", type=positive_int, default=30, metavar="N")
+    p.add_argument(
+        "--bins",
+        type=positive_int,
+        default=30,
+        metavar="N",
+        help="number of histogram bins",
+    )
     p.add_argument(
         "--hough-ref",
         type=positive_float,
@@ -322,11 +361,12 @@ def _add_histogram(sub) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the complete ``cibica`` parser with all six subcommands."""
+    """Build the complete ``cibica`` parser with all seven subcommands."""
     parser = argparse.ArgumentParser(
         prog="cibica",
         description="Estimate a circle from an image or edge points. "
-        "The method is the subcommand; 'cibica <input>' runs CIBICA.",
+        "The method is the subcommand; 'cibica <input>' runs CIBICA. "
+        "'histogram' redraws paper Fig. 8 from stored data.",
         epilog=(
             "examples:\n"
             "  cibica image.jpg\n"

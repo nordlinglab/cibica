@@ -4,9 +4,9 @@
 
 One panel: for every method, the proportion of crops in which the estimate
 fits the target (Jaccard index at least 0.8) per bin of ``q``, the share of
-edge points that lie on the distractor circle. The curve answers the question
-of the round-3 revision directly: how much of the edge set may belong to a
-second circle before each estimator stops locking on to the target.
+edge points that lie on the distractor circle (paper Fig. 18). The curve shows
+how much of the edge set may belong to a second circle before each estimator
+stops locking on to the target.
 
 The figure consumes the per-crop table written by
 :func:`cibica.experiments.two_circle.run_two_circle`, so it imports no
@@ -160,7 +160,7 @@ def plot_lock_on_vs_q(
 
     os.makedirs(output_dir, exist_ok=True)
     suffix = f"_{date_tag}" if date_tag else ""
-    stem = "FigR7_TwoCircle_LockOnVsQ" + (f"_{dataset}" if dataset else "")
+    stem = "Fig18_TwoCircle_LockOnVsQ" + (f"_{dataset}" if dataset else "")
     paths = []
     for ext in (".png", ".pdf"):
         path = os.path.join(output_dir, f"{stem}{suffix}{ext}")

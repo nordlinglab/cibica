@@ -29,7 +29,7 @@ from cibica.estimators import (
     CIBICA,
     HOUGH,
     LS_circle,
-    median_3d,
+    joint_mode_3d,
     qi_2024,
     rcd,
     rht,
@@ -178,6 +178,11 @@ def _estimate_one(
     # unified API defaults to the companion study's thresholds; the library
     # functions cibica.rht and cibica.rcd keep the published defaults, and an
     # explicit keyword here overrides the study value.
+    if method in ("rht", "rcd") and kwargs.get("select") == "all":
+        raise ValueError(
+            'select="all" returns several circles; estimate() returns one, so '
+            'use "first" or "strongest", or call rht_detect_all/rcd_detect_all'
+        )
     if method == "rht":
         for key, value in RHT_STUDY_PARAMS.items():
             kwargs.setdefault(key, value)
@@ -243,7 +248,7 @@ class ConsensusResult:
     Attributes:
         mode: Estimate ``(x, y, r)`` of the joint-mode consensus (CIBICA).
         median: Estimate of the per-axis-median consensus on the same
-            hypotheses, refined identically (the R2.1 ablation variant).
+            hypotheses, refined identically (the consensus-ablation variant).
         n_triplets: Triplets sampled.
         n_hypotheses: Triplet circles left after CIBICA's three filters.
         mode_count: Hypotheses in the modal rounded ``(r, x, y)`` cell.
@@ -335,9 +340,7 @@ def cibica_consensus_variants(
     mode_count = int(ordered[0])
     second_count = int(ordered[1]) if len(ordered) > 1 else 0
 
-    mode_row, mode_col, mode_radius = median_3d(
-        centre_rows, centre_cols, radii, xmax, ymax
-    )
+    mode_row, mode_col, mode_radius = joint_mode_3d(centre_rows, centre_cols, radii)
     mode = _refine(coordinates, mode_row, mode_col, mode_radius)
 
     median = _refine(
@@ -425,14 +428,17 @@ def estimate(
             (:data:`cibica.study_config.RHT_STUDY_PARAMS`,
             :data:`cibica.study_config.RCD_STUDY_PARAMS`) rather than to the
             published full-image values that :func:`cibica.rht` and
-            :func:`cibica.rcd` use.
+            :func:`cibica.rcd` use. Both also take ``select``, ``"first"``
+            (default) or ``"strongest"``, the rule for which detected circle
+            is returned (see :mod:`cibica.estimators.rht`).
 
     Returns:
         A single ``(x_col, y_row, r)`` for one input, or a list of those triples
         for a sequence. A failed fit is ``(nan, nan, nan)``.
 
     Raises:
-        ValueError: For an unknown ``method`` or edge-point input to ``hough``.
+        ValueError: For an unknown ``method``, edge-point input to ``hough``,
+            or ``select="all"``, which yields several circles per input.
     """
     method = method.lower()
     if method not in METHODS:

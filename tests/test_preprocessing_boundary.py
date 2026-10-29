@@ -204,3 +204,14 @@ def test_preprocessing_pipelines_default_to_the_boundary():
     x, y, r = cibica.estimate(frame, method="qi", preprocess="green_level")
     assert (x, y) == pytest.approx((24.0, 25.0), abs=1.0)
     assert r == pytest.approx(12.0, abs=1.0)
+
+
+def test_general_pipeline_defaults_to_the_boundary_reference_level():
+    """The green-level default is the centre of the boundary window, GL72."""
+    import inspect
+
+    from cibica.preprocessing import image_to_edge_points
+    from cibica.study_config import FIGURE_CONFIG
+
+    default = inspect.signature(image_to_edge_points).parameters["green_level"].default
+    assert f"GL{default}" == FIGURE_CONFIG == "GL72"

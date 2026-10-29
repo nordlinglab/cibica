@@ -765,3 +765,7 @@ logs/**
 # CIBICA reproduction outputs (scripts/run_experiment.py)
 # =============================================================================
 results/
+
+# Public circle datasets of the two-circle experiment, downloaded by
+# scripts/download_two_circle_data.py; redistributed by their authors, not here.
+/data/external/

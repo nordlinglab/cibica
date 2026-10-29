@@ -709,3 +709,18 @@ def test_compare_header_also_counts_many_inputs(tmp_path, capsys):
     assert "method=compare(qi) inputs=2" in captured.err
     for path in images:
         assert str(path) not in captured.err
+
+
+@pytest.mark.parametrize("method", ["rht", "rcd"])
+def test_cli_select_chooses_the_returned_circle(tmp_path, capsys, method):
+    """--select passes "first" or "strongest" through; "all" is not offered."""
+    img = tmp_path / "c.png"
+    cv2.imwrite(str(img), _circle_image())
+    for select in ("first", "strongest"):
+        assert (
+            cli.main([method, str(img), "--select", select, "--seed", "1", "-q"]) == 0
+        )
+    with pytest.raises(SystemExit) as exc:
+        cli.main([method, str(img), "--select", "all"])
+    assert exc.value.code == 2
+    capsys.readouterr()

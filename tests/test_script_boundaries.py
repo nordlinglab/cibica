@@ -82,6 +82,26 @@ def test_worker_option_accepts_the_pre_2_1_spelling(path):
         assert "must be zero or greater" in completed.stderr, option
 
 
+EDGE_OPTION_SCRIPTS = (
+    ROOT / "scripts" / "run_experiment.py",
+    ROOT / "scripts" / "run_constraint_ablation.py",
+    ROOT / "scripts" / "run_per_configuration_stats.py",
+)
+
+
+@pytest.mark.parametrize("path", EDGE_OPTION_SCRIPTS, ids=lambda path: path.name)
+def test_window_dependent_script_offers_the_edge_extractor(path):
+    """Scripts whose reference window follows the extractor must expose it."""
+    rendered = subprocess.run(
+        [sys.executable, str(path), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    assert "--edges" in rendered
+
+
 @pytest.mark.parametrize("path", SCRIPTS, ids=lambda path: path.name)
 def test_study_script_help_runs(path):
     completed = subprocess.run(
@@ -107,6 +127,8 @@ def test_study_script_help_runs(path):
             ROOT / "scripts" / "run_constraint_ablation.py",
             ["--output", "result.txt"],
         ),
+        (ROOT / "scripts" / "run_constraint_ablation.py", ["--edges", "sobel"]),
+        (ROOT / "scripts" / "run_constraint_ablation.py", ["--edges"]),
         (ROOT / "scripts" / "run_two_circle.py", ["--target-radius", "25"]),
         (ROOT / "scripts" / "run_two_circle.py", ["--datasets", "iris"]),
         (ROOT / "scripts" / "run_two_circle.py", ["--h", "2", "--target-radius", "9"]),

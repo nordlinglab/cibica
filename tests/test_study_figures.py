@@ -174,7 +174,7 @@ def test_summary_reports_all_views_and_win_counts(sweep_results, capsys, replica
     out = capsys.readouterr().out
     assert "(i) Average over ALL" in out
     assert "[paper Table 3]" in out
-    assert "(iii) Mean over GL80, GL82, GL84" in out
+    assert "(iii) Mean over GL70, GL72, GL74" in out
     assert "Win counts" in out
     for method in METHODS:
         assert method in out
@@ -194,16 +194,14 @@ def test_robustness_report_quotes_both_stages(sweep_results, focal_stats, capsys
         "n_edge_images": 56,
         "edge_images_per_second": 28.0,
         "ms_per_edge_image": 1.0,
-        "end_to_end_fps": 333.3,
-        "ms_preprocessing": 1.0,
-        "ms_fitting": 2.0,
     }
     capsys.readouterr()  # drop the writer's own progress lines
     report.print_robustness_and_timing(summaries, focal_stats, throughput)
     out = capsys.readouterr().out
     assert "Per-subject mean Jaccard" in out
-    assert "end-to-end" in out
-    assert "ms preprocessing" in out
+    assert "ms each" in out
+    # The end-to-end rate is derived from the single-core repeats, not here.
+    assert "end-to-end rate: run_timing_repeats.py" in out
     # Only HOUGH and QI are quoted inline in the manuscript.
     assert "vs HOUGH" in out and "vs QI" in out
 
@@ -212,8 +210,8 @@ def test_paper_mapping_separates_the_speed_figures_from_this_run(capsys):
     """The sweep's FPS column is not the paper's, and the output must say so.
 
     A reader who took Table3_BestConfig's FPS column at face value would quote
-    a number 20-70% below the paper's, because that column times the sweep
-    under 16-way contention rather than one core.
+    a number up to about 40% below the paper's, because that column times the
+    sweep with one worker per performance core rather than on one core.
     """
     report.print_paper_mapping("figs", "tabs")
     out = capsys.readouterr().out
@@ -229,10 +227,16 @@ def test_paper_mapping_separates_the_speed_figures_from_this_run(capsys):
 def test_paper_mapping_ends_with_the_commands_that_reproduce_every_table(capsys):
     report.print_paper_mapping("figs", "tabs")
     tail = capsys.readouterr().out.rsplit("reproduce every table", 1)[-1]
+    assert "scripts/reproduce_article.py" in tail
     for command in (
-        "run_experiment.py --full --replicates 100 --seed 42",
-        "run_timing_repeats.py --repeats 13",
+        "run_experiment.py --full --supplementary --replicates 100 --seed 42",
+        "run_experiment.py --full --replicates 100 --seed 42 --edges canny",
         "run_labeling_analysis.py --compare-passes",
+        "run_per_configuration_stats.py",
+        "run_window_sensitivity.py",
+        "run_two_circle.py",
+        "run_constraint_ablation.py",
+        "run_timing_repeats.py --repeats 13",
     ):
         assert command in tail, command
 
@@ -245,3 +249,21 @@ def test_paper_mapping_lists_every_numbered_artefact(capsys):
     for item in ("Fig11", "Fig12", "Fig13", "Fig14", "Fig15", "Fig16", "Fig17"):
         assert item in out
     assert "FigS1-FigS6" in out
+    # Artefacts written by the other study scripts are named with their script.
+    for item in ("Table 8", "Fig. 18", "Table A1", "Fig. A1", "Table A2", "Table A3"):
+        assert item in out, item
+    for item in ("Stats_SubjectLevel", "EdgeCounts", "Table3_Latency"):
+        assert item in out, item
+
+
+def test_paper_mapping_names_the_configuration_each_figure_uses(capsys):
+    report.print_paper_mapping("figs", "tabs")
+    out = capsys.readouterr().out
+    for stale in ("GL80", "GL82", "GL84"):
+        assert stale not in out, stale
+    assert "Fig13 violin (GL72)" in out
+
+
+def test_summary_names_the_window_it_averages(sweep_results, capsys):
+    report.print_summary(sweep_results, replicates=1, configs=("GL80", "GL82", "GL84"))
+    assert "(iii) Mean over GL80, GL82, GL84" in capsys.readouterr().out

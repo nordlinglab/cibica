@@ -13,6 +13,10 @@ supplementary table needs.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+from pathlib import Path
+
 import matplotlib
 
 matplotlib.use("Agg")
@@ -43,11 +47,15 @@ from cibica.analysis.per_configuration import (
     infer_tag,
     load_jaccard_tables,
     per_configuration_table,
+    pooled_label,
     pooled_reference_table,
     summarise_per_configuration,
 )
-from cibica.study_config import BEST_GL, METHODS
+from cibica.study_config import BEST_GL, CANNY_GL, METHODS
+from cibica.visualization import per_configuration as per_configuration_figure
 from cibica.visualization.per_configuration import plot_hl_per_configuration
+
+ROOT = Path(__file__).resolve().parents[1]
 
 # The study's 18 configurations in manuscript order.
 CONFIGS = [f"GL{g}" for g in range(70, 87, 2)] + [f"Med{m}" for m in range(3, 20, 2)]
@@ -351,6 +359,20 @@ class TestPerConfigurationTable:
         assert row["p_wilcoxon"] == pytest.approx(direct["p_wilcoxon"])
         assert row["BCa_lo"] == pytest.approx(direct["BCa_lo"])
 
+    def test_pooled_label_names_the_window_ends(self):
+        assert POOLED_LABEL == pooled_label(BEST_GL) == "GL70-GL74"
+        assert pooled_label(CANNY_GL) == "GL80-GL84"
+
+    def test_pooled_reference_follows_the_given_window(self, tables):
+        pooled = pooled_reference_table(
+            tables, configs=CANNY_GL, seed=42, n_jobs=1, **SMALL
+        )
+        assert list(pooled["config"]) == ["GL80-GL84"] * 4
+        focal = tables["CIBICA"][list(CANNY_GL)].mean(axis=1)
+        baseline = tables["HOUGH"][list(CANNY_GL)].mean(axis=1)
+        direct = contrast_statistics(focal, baseline, seed=42, **SMALL)
+        assert pooled.iloc[0]["HL"] == pytest.approx(direct["HL"])
+
     def test_summary_counts_per_baseline(self, table):
         summary = summarise_per_configuration(table)
         assert list(summary["baseline"]) == list(BASELINES)
@@ -403,4 +425,76 @@ class TestFigure:
         assert sorted(p.rsplit(".", 1)[1] for p in paths) == ["pdf", "png"]
         for path in paths:
             assert (tmp_path / path.rsplit("/", 1)[1]).stat().st_size > 0
-            assert "FigS_HL_PerConfiguration_T1" in path
+            assert "FigA1_HL_PerConfiguration_T1" in path
+
+    @pytest.mark.parametrize(
+        ("window", "label"),
+        [
+            (BEST_GL, "pooled GL70–GL74 (primary)"),
+            (CANNY_GL, "pooled GL80–GL84 (primary)"),
+        ],
+    )
+    def test_legend_and_band_follow_the_window(
+        self, tmp_path, monkeypatch, table, tables, window, label
+    ):
+        figures = []
+        monkeypatch.setattr(per_configuration_figure.plt, "close", figures.append)
+        pooled = pooled_reference_table(
+            tables, configs=window, seed=42, n_jobs=1, **SMALL
+        )
+        plot_hl_per_configuration(
+            table,
+            str(tmp_path),
+            pooled=pooled,
+            window=window,
+            progress=lambda *_: None,
+        )
+        (fig,) = figures
+        texts = [t.get_text() for t in fig.legends[0].get_texts()]
+        assert texts[-1] == label
+        span = fig.axes[0].patches[0].get_x(), fig.axes[0].patches[0].get_width()
+        first = CONFIGS.index(window[0])
+        assert span == (pytest.approx(first - 0.5), pytest.approx(len(window)))
+
+
+class TestScript:
+    @pytest.mark.parametrize(
+        ("edges", "label"), [("boundary", "GL70-GL74"), ("canny", "GL80-GL84")]
+    )
+    def test_edges_selects_the_pooled_window(self, tmp_path, tables, edges, label):
+        results = tmp_path / "tables_in"
+        results.mkdir()
+        for method, frame in tables.items():
+            frame.to_csv(results / f"Jaccard_{method}_T1.csv")
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "run_per_configuration_stats.py"),
+                "--results",
+                str(results),
+                "--edges",
+                edges,
+                "--permutations",
+                "200",
+                "--bootstrap",
+                "100",
+                "-j",
+                "1",
+                "-o",
+                str(tmp_path / "out"),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stderr
+        pooled = pd.read_csv(
+            tmp_path / "out" / "tables" / "StatsS_PooledReference_T1.csv"
+        )
+        assert set(pooled["config"]) == {label}
+        run_info = (
+            tmp_path / "out" / "tables" / "StatsS_PerConfiguration_RunInfo_T1.txt"
+        ).read_text()
+        assert f"edges: {edges}" in run_info
+        assert f"reference_window: {label}" in run_info

@@ -3,9 +3,10 @@
 """Contracts of the second-circular-edge experiment.
 
 The loader tests read one real file of each public dataset and skip when the
-distributions are not present (they live outside this repository, under the
-parent project's ``data/external`` or the directory named by
-``CIBICA_TWO_CIRCLE_DATA``). Everything else runs on synthetic rasters.
+distributions are not present. ``scripts/download_two_circle_data.py`` puts
+them in the git-ignored ``data/external`` of this repository; the directory
+named by ``CIBICA_TWO_CIRCLE_DATA`` takes precedence. Everything else runs on
+synthetic rasters.
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from cibica.visualization.two_circle import lock_on_by_bin, plot_lock_on_vs_q
 DATA = Path(
     os.environ.get(
         "CIBICA_TWO_CIRCLE_DATA",
-        Path(__file__).resolve().parents[3] / "data" / "external",
+        Path(__file__).resolve().parents[1] / "data" / "external",
     )
 )
 needs_data = pytest.mark.skipif(
@@ -438,7 +439,16 @@ def test_run_two_circle_end_to_end(tmp_path):
         axis=1
     ).to_numpy() == pytest.approx(1.0)
     assert {"two_circle", "single_circle"} <= set(tables["ablation"]["group"])
-    assert "spearman_rho_score_vs_q" in set(tables["consensus"]["statistic"])
+    statistics = set(tables["consensus"]["statistic"])
+    assert "spearman_rho_score_vs_q" in statistics
+    for name in (
+        "median_consensus_score single_circle",
+        "median_consensus_score two_circle",
+        "median_consensus_score pure_noise",
+        "auc_single_vs_two_circle",
+        "auc_single_vs_two_circle toy",
+    ):
+        assert name in statistics, name
 
     curve = lock_on_by_bin(crops)
     assert curve["n"].sum() == 4
@@ -446,6 +456,16 @@ def test_run_two_circle_end_to_end(tmp_path):
         crops, str(tmp_path / "fig"), "test", progress=lambda _m: None
     )
     assert all(Path(p).is_file() for p in paths)
+    assert all("Fig18_TwoCircle_LockOnVsQ" in Path(p).name for p in paths)
+
+
+def test_consensus_auc_is_the_probability_a_single_circle_scores_higher():
+    """AUC of the score as a detector of a second circle, ties counted half."""
+    auc = tc.consensus_auc([0.3, 0.2, 0.1], [0.05, 0.1])
+    # 6 pairs: (0.3,0.05) (0.3,0.1) (0.2,0.05) (0.2,0.1) (0.1,0.05) win, (0.1,0.1) tie.
+    assert auc == pytest.approx(5.5 / 6)
+    assert tc.consensus_auc([0.1], [0.2]) == 0.0
+    assert math.isnan(tc.consensus_auc([], [0.2]))
 
 
 def test_run_two_circle_validates_radii():

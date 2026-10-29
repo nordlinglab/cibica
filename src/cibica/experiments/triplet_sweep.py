@@ -52,7 +52,9 @@ class TripletSweepResult:
     runs: int
 
 
-def _prepare_frames(data_dir: str | Path, config_name: str) -> list[TripletFrame]:
+def _prepare_frames(
+    data_dir: str | Path, config_name: str, edges: str = "boundary"
+) -> list[TripletFrame]:
     data_path = Path(data_dir)
     ground_truth = pd.read_csv(data_path / "Ground_Truth.csv")
     config = next(
@@ -68,7 +70,9 @@ def _prepare_frames(data_dir: str | Path, config_name: str) -> list[TripletFrame
         if image is None:
             continue
         try:
-            _, _, edgels = preprocess_green_level(image, config["green_level"])
+            _, _, edgels = preprocess_green_level(
+                image, config["green_level"], edges=edges
+            )
         except Exception:
             continue
         if len(edgels) < 3:
@@ -126,15 +130,19 @@ def run_triplet_sweep(
     seed: int | None = None,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    edges: str = "boundary",
 ) -> TripletSweepResult:
-    """Compute the triplet sweep without writing tables or figures."""
+    """Compute the triplet sweep without writing tables or figures.
+
+    ``edges`` selects the mask's edge extractor, as in the method comparison.
+    """
     if runs < 1:
         raise ValueError("runs must be at least 1")
     triplet_counts = tuple(int(value) for value in n_triplets_list)
     if not triplet_counts or any(value < 1 for value in triplet_counts):
         raise ValueError("n_triplets_list must contain positive integers")
 
-    frames = _prepare_frames(data_dir, config_name)
+    frames = _prepare_frames(data_dir, config_name, edges)
     tasks = [
         TripletTask(
             n_triplets=n_triplets,

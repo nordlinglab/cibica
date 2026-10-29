@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
-"""Run the statistical battery in every configuration (round-3 R2.4)."""
+"""Run the statistical battery in every configuration (paper Table A1, Fig. A1)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 from cibica._cli_types import DefaultsHelpFormatter, nonnegative_int, positive_int
 from cibica.parallel import performance_cores, pin_compute_threads
+from cibica.study_config import reference_window
 
 DEFAULT_RESULTS = Path("results") / "tables"
 DEFAULT_OUTPUT = Path("results") / "stats18"
@@ -24,6 +25,7 @@ def main(
     bootstrap: int = 10_000,
     n_jobs: int = 0,
     output: Path = DEFAULT_OUTPUT,
+    edges: str = "boundary",
 ) -> None:
     """Read the Jaccard tables, compute the 72 contrasts and write the outputs."""
     pin_compute_threads()
@@ -50,10 +52,12 @@ def main(
     configs = configuration_names(tables)
     n_frames = len(tables[FOCAL])
     workers = performance_cores() if n_jobs == 0 else n_jobs
+    window = reference_window(edges)
     print(
         f"Input: {results} (tag {tag}), {len(tables)} methods x {n_frames} frames "
         f"x {len(configs)} configurations"
     )
+    print(f"Edge extractor {edges}: pooled reference window {window[0]}-{window[-1]}")
     print(
         f"{len(configs) * len(BASELINES)} contrasts: {permutations:,} sign flips, "
         f"{bootstrap:,} BCa resamples, {HL_RESAMPLES:,} HL resamples, seed {seed}, "
@@ -76,6 +80,7 @@ def main(
     per_configuration_seconds = time.perf_counter() - started
     pooled = pooled_reference_table(
         tables,
+        configs=window,
         n_permutations=permutations,
         n_resamples=bootstrap,
         seed=seed,
@@ -96,13 +101,17 @@ def main(
     summary.to_csv(paths["summary"], index=False)
     for label, path in paths.items():
         print(f"  Saved: {path}  ({label})")
-    plot_hl_per_configuration(table, str(output / "figures"), tag, pooled=pooled)
+    plot_hl_per_configuration(
+        table, str(output / "figures"), tag, pooled=pooled, window=window
+    )
 
     run_info = table_dir / f"StatsS_PerConfiguration_RunInfo_{tag}.txt"
     run_info.write_text(
         "\n".join(
             [
                 f"input: {results} tag {tag}",
+                f"edges: {edges}",
+                f"reference_window: {window[0]}-{window[-1]}",
                 f"contrasts: {len(table)} ({len(configs)} configurations x "
                 f"{len(BASELINES)} baselines), {n_frames} paired frames each",
                 f"permutations: {permutations}",
@@ -167,6 +176,16 @@ if __name__ == "__main__":
         help="run tag in the table filenames (default: the single run in DIR)",
     )
     parser.add_argument(
+        "--edges",
+        choices=("boundary", "canny"),
+        default="boundary",
+        help=(
+            "edge extractor the Jaccard tables were computed with; it selects "
+            "the pooled reference window (GL70-GL74 for the boundary, "
+            "GL80-GL84 for Canny)"
+        ),
+    )
+    parser.add_argument(
         "--seed",
         type=nonnegative_int,
         default=42,
@@ -224,4 +243,5 @@ if __name__ == "__main__":
         bootstrap=arguments.bootstrap,
         n_jobs=arguments.jobs,
         output=arguments.output,
+        edges=arguments.edges,
     )

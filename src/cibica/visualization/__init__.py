@@ -23,11 +23,11 @@ only what they need:
   (five-method comparison at the reference configurations).
 - :mod:`cibica.visualization.diagnostics` --- supplementary Figs. S3-S5,
   produced only under ``--supplementary``.
-- :mod:`cibica.visualization.two_circle` --- round-3 Fig. R7 (target
-  lock-on against the distractor edge share of the two-circle experiment).
-- :mod:`cibica.visualization.per_configuration` --- round-3 supplementary
-  figure (Hodges-Lehmann shift of CIBICA over each baseline in every
-  configuration, R2.4).
+- :mod:`cibica.visualization.two_circle` --- paper Fig. 18 (target lock-on
+  against the distractor edge share of the two-circle experiment).
+- :mod:`cibica.visualization.per_configuration` --- paper Fig. A1
+  (Hodges-Lehmann shift of CIBICA over each baseline in every
+  configuration).
 
 Per-method colour, marker, and line style live in
 :mod:`cibica.visualization._style`, so every figure identifies a method the

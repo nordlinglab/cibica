@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 """Statistical comparison of CIBICA against each baseline in every configuration.
 
-The manuscript's primary comparison pools the three reference green levels
-(GL80-GL84). This module runs the same battery of statistics separately in
-each of the 18 preprocessing configurations, for each of the four
+The manuscript's primary comparison pools the three green levels of the
+reference window (:data:`cibica.study_config.BEST_GL`, GL70-GL74 for the
+default boundary extractor; :func:`cibica.study_config.reference_window` gives
+the window of each extractor). This module runs the same battery of
+statistics separately in each of the 18 preprocessing configurations, for
+each of the four
 CIBICA-baseline contrasts (72 contrasts, 144 paired frames each):
 
 - the two-sided Wilcoxon signed-rank test with ``W+`` and the rank-biserial
@@ -55,8 +58,14 @@ FOCAL = "CIBICA"
 #: Baselines in the study's method order.
 BASELINES: tuple[str, ...] = tuple(m for m in METHODS if m != FOCAL)
 
-#: Label of the pooled reference rows.
-POOLED_LABEL = f"{BEST_GL[0]}-{BEST_GL[-1]}"
+
+def pooled_label(configs: Sequence[str]) -> str:
+    """Label of the pooled reference rows over the window ``configs``."""
+    return f"{configs[0]}-{configs[-1]}"
+
+
+#: Label of the pooled reference rows over the default window.
+POOLED_LABEL = pooled_label(BEST_GL)
 
 #: Resamples of the Hodges-Lehmann percentile interval, as in the manuscript.
 HL_RESAMPLES = 4000
@@ -117,6 +126,22 @@ def infer_tag(tables_dir: str | Path, focal: str = FOCAL) -> str:
             + ", ".join(p.stem.split("_", 2)[-1] for p in paths)
         )
     return paths[0].stem.split("_", 2)[-1]
+
+
+def latest_tag(tables_dir: str | Path, focal: str = FOCAL) -> str:
+    """Return the run tag of the most recently written ``Jaccard_<focal>_*.csv``.
+
+    For a caller that has just produced the run, such as the reproduction
+    driver, where a rerun on another day leaves an older date tag beside it.
+
+    Raises:
+        FileNotFoundError: If no such table exists.
+    """
+    paths = list(Path(tables_dir).glob(f"Jaccard_{focal}_*.csv"))
+    if not paths:
+        raise FileNotFoundError(f"no Jaccard_{focal}_*.csv in {tables_dir}")
+    newest = max(paths, key=lambda path: path.stat().st_mtime)
+    return newest.stem.split("_", 2)[-1]
 
 
 def load_jaccard_tables(
@@ -336,13 +361,14 @@ def pooled_reference_table(
 ) -> pd.DataFrame:
     """The manuscript's primary comparison: per-frame mean over the reference window.
 
-    One row per baseline, labelled :data:`POOLED_LABEL`, with the statistic
+    One row per baseline, labelled :func:`pooled_label` of ``configs``
+    (:data:`POOLED_LABEL` for the default window), with the statistic
     columns of :data:`COLUMNS` and no Holm columns: these four contrasts are
     the pre-specified primary analysis, reported with exact p-values.
     """
     tasks = [
         ContrastTask(
-            config=POOLED_LABEL,
+            config=pooled_label(configs),
             baseline=baseline,
             focal_scores=tables[focal][list(configs)].mean(axis=1).to_numpy(float),
             baseline_scores=tables[baseline][list(configs)]
@@ -413,8 +439,10 @@ __all__ = [
     "contrast_statistics",
     "holm_columns",
     "infer_tag",
+    "latest_tag",
     "load_jaccard_tables",
     "per_configuration_table",
+    "pooled_label",
     "pooled_reference_table",
     "summarise_per_configuration",
 ]

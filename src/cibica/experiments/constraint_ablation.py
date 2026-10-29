@@ -17,7 +17,7 @@ from cibica.analysis.circle_geometry import jaccard_circles
 from cibica.estimate import estimate
 from cibica.parallel import map_tasks, task_rng
 from cibica.preprocessing import get_preprocessing_configs, preprocess_green_level
-from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS
+from cibica.study_config import RCD_STUDY_PARAMS, RHT_STUDY_PARAMS, reference_window
 
 RMIN, RMAX = 4.0, 30.0
 REGIMES = ("unconstrained", "radius_only", "matched")
@@ -43,6 +43,7 @@ class ConstraintAblationTask:
     y_ground_truth: float
     r_ground_truth: float
     green_levels: tuple[int, ...]
+    edges: str
     replicates: int
     seed: int
     report_constraints: bool
@@ -156,7 +157,9 @@ def _run_constraint_frame(
     truth = (task.x_ground_truth, task.y_ground_truth, task.r_ground_truth)
     for config_index, green_level in enumerate(task.green_levels):
         try:
-            _, edge_image, edgels = preprocess_green_level(image, green_level)
+            _, edge_image, edgels = preprocess_green_level(
+                image, green_level, edges=task.edges
+            )
         except Exception:
             continue
         if len(edgels) < 4:
@@ -201,9 +204,15 @@ def run_constraint_ablation(
     seed: int = 42,
     report_constraints: bool = False,
     n_jobs: int = 1,
+    edges: str = "boundary",
     on_progress: Callable[[int, int], None] | None = None,
 ) -> pd.DataFrame:
     """Return the constraint-ablation summary without writing files.
+
+    The ablation runs on the reference window of the edge extractor
+    (:func:`cibica.study_config.reference_window`), GL70-GL74 for the internal
+    boundary and GL80-GL84 for Canny, so it is computed on the frames the
+    method comparison uses.
 
     Frames are distributed over ``n_jobs`` worker processes and their scores
     are concatenated in frame order, so the summary is identical for any
@@ -217,10 +226,11 @@ def run_constraint_ablation(
     names = ground_truth["Filename"].tolist()
     if frames is not None:
         names = names[:frames]
+    window = reference_window(edges)
     green_levels = tuple(
         int(config["green_level"])
         for config in get_preprocessing_configs()
-        if config["name"] in {"GL80", "GL82", "GL84"}
+        if config["name"] in window
     )
     scores: dict[str, dict[str, list[float]]] = {
         regime: {method: [] for method in METHODS} for regime in REGIMES
@@ -235,6 +245,7 @@ def run_constraint_ablation(
             y_ground_truth=float(ground_truth.iloc[frame_index]["Y"]),
             r_ground_truth=float(ground_truth.iloc[frame_index]["R"]),
             green_levels=green_levels,
+            edges=edges,
             replicates=replicates,
             seed=seed,
             report_constraints=report_constraints,

@@ -96,6 +96,30 @@ def test_preprocessing_throughput_driver_on_one_frame():
     not (DATA / "Ground_Truth.csv").is_file(),
     reason="dataset not present",
 )
+@pytest.mark.parametrize(
+    ("edges", "levels"),
+    [("boundary", (70, 72, 74)), ("canny", (80, 82, 84))],
+)
+def test_constraint_ablation_window_follows_the_edge_extractor(
+    monkeypatch, edges, levels
+):
+    """The ablation runs on the extractor's own reference window, not GL80-84."""
+    from cibica.experiments import constraint_ablation
+
+    captured = []
+
+    def fake_map(_function, tasks, **_kwargs):
+        captured.extend(tasks)
+        regimes = constraint_ablation.REGIMES
+        methods = constraint_ablation.METHODS
+        return [{r: {m: [1.0] for m in methods} for r in regimes} for _ in tasks]
+
+    monkeypatch.setattr(constraint_ablation, "map_tasks", fake_map)
+    run_constraint_ablation(DATA, frames=2, replicates=1, edges=edges)
+    assert [task.green_levels for task in captured] == [levels, levels]
+    assert {task.edges for task in captured} == {edges}
+
+
 def test_constraint_ablation_driver_returns_every_method_and_regime():
     result = run_constraint_ablation(DATA, frames=1, replicates=1, seed=3)
     assert len(result) == 15
@@ -206,3 +230,34 @@ def test_edge_counts_drops_frames_whose_preprocessing_fails(monkeypatch, tmp_pat
 
     monkeypatch.setattr(module, "preprocess_green_level", explode)
     assert module.compute_edge_counts(tmp_path, "GL82", n_jobs=1).size == 0
+
+
+@pytest.mark.parametrize("edges", ["boundary", "canny"])
+def test_triplet_sweep_uses_the_requested_edge_extractor(monkeypatch, edges):
+    """Table 6 of a Canny run must be computed on Canny edges."""
+    seen = []
+
+    def fake_preprocess(image, green_level, edges="boundary"):
+        seen.append(edges)
+        return None, None, np.zeros((0, 2))
+
+    monkeypatch.setattr(triplet_sweep, "preprocess_green_level", fake_preprocess)
+    triplet_sweep._prepare_frames(DATA, "GL72", edges=edges)
+    assert seen and set(seen) == {edges}
+
+
+@pytest.mark.parametrize("edges", ["boundary", "canny"])
+def test_qualitative_scoring_uses_the_requested_edge_extractor(monkeypatch, edges):
+    """Figs. 15 and 16 of a Canny run must be drawn from Canny edges."""
+    from cibica.experiments import qualitative
+
+    captured = []
+
+    def fake_map(_function, tasks, **_kwargs):
+        captured.extend(tasks)
+        return []
+
+    monkeypatch.setattr(qualitative, "map_tasks", fake_map)
+    qualitative.score_cibica_vs_hough(DATA, edges=edges)
+    qualitative.score_cibica_vs_qi(DATA, edges=edges)
+    assert captured and {task.edges for task in captured} == {edges}

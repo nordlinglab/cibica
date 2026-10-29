@@ -46,6 +46,7 @@ import pandas as pd
 from cibica.analysis.study_summaries import compute_focal_stats, pairwise_comparisons
 from cibica.analysis.tables import (
     save_cohort_table,
+    save_edge_counts_table,
     save_raw_csvs,
     save_stats_csvs,
     save_subject_tables,
@@ -231,19 +232,22 @@ def main(
         plot_summary_panel(results, output_dir=figures)
         plot_jaccard_distance(results, output_dir=figures)
 
-    # Paper Fig. 11 — edge pixels and triplet combinations per frame. Uses GL82:
-    # at this reference config the majority of frames have < 100k triplet
-    # combinations while a few exceed 1,000,000, matching the manuscript text.
+    # Paper Fig. 11 — edge pixels and triplet combinations per frame at
+    # FIGURE_CONFIG (GL72, the centre of the reference window); the counts are
+    # also written as EdgeCounts_<tag>.csv so the figure's numbers are stored.
     fig11_idx = cfg_names.index(FIGURE_CONFIG) if FIGURE_CONFIG in cfg_names else 0
     plot_pixel_combinations(results["edge_counts"][:, fig11_idx], output_dir=figures)
+    save_edge_counts_table(results, output_dir=tables, tag=tag)
 
-    # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT at GL80; CIBICA
-    # vs Qi et al. failure gallery at GL82). Runs CIBICA + one baseline on all
+    # Paper Figs. 15 & 16 — qualitative overlays (CIBICA vs CHT and the CIBICA
+    # vs Qi et al. failure gallery, both at GL72). Runs CIBICA + one baseline on all
     # 144 frames at a single config each, independent of the main 5x18 sweep.
     # Colours pin the manuscript caption scheme (BGR): ground truth green
     # dashed, CIBICA blue, CHT red, Qi et al. orange — overriding the
     # image-adaptive ColorBrewer defaults so the captions stay accurate.
-    hough_truth, hough_scores = score_cibica_vs_hough(_DATA, seed=seed, n_jobs=n_jobs)
+    hough_truth, hough_scores = score_cibica_vs_hough(
+        _DATA, seed=seed, n_jobs=n_jobs, edges=edges
+    )
     plot_visual_comparison_result(
         _DATA,
         hough_truth,
@@ -252,7 +256,9 @@ def main(
         colors=[(180, 119, 31), (40, 39, 214)],
         gt_color=(60, 200, 60),
     )
-    qi_truth, qi_scores = score_cibica_vs_qi(_DATA, seed=seed, n_jobs=n_jobs)
+    qi_truth, qi_scores = score_cibica_vs_qi(
+        _DATA, seed=seed, n_jobs=n_jobs, edges=edges
+    )
     plot_failure_gallery_result(
         _DATA,
         qi_truth,
@@ -262,11 +268,11 @@ def main(
         gt_color=(60, 200, 60),
     )
 
-    report.print_summary(results, replicates=replicates)
+    report.print_summary(results, replicates=replicates, configs=window)
 
     # Paper Table 6 + Fig. 17 (CIBICA accuracy/variability vs triplet count at
-    # GL80). The range/CV columns and Fig. 17 need repeated runs per frame, so
-    # --full sets the run count to --replicates (the paper uses 100).
+    # TABLE6_CONFIG, GL72). The range/CV columns and Fig. 17 need repeated runs
+    # per frame, so --full sets the run count to --replicates (the paper: 100).
     sweep_runs = replicates if full else 1
     print(f"\nRunning triplet sweep at {TABLE6_CONFIG} (paper Table 6 / Fig. 17)...")
     triplet_result = run_triplet_sweep(
@@ -275,6 +281,7 @@ def main(
         config_name=TABLE6_CONFIG,
         seed=seed,
         n_jobs=n_jobs,
+        edges=edges,
     )
     pd.DataFrame(triplet_result.rows).to_csv(
         tables / f"Table6_TripletSweep_{tag}.csv", index=False
@@ -296,5 +303,7 @@ def main(
             tables / f"Table7_Ablation_{tag}.csv", index=False
         )
 
-    report.print_robustness_and_timing(subject_summaries, focal_stats, throughput)
+    report.print_robustness_and_timing(
+        subject_summaries, focal_stats, throughput, configs=window
+    )
     report.print_paper_mapping(figures, tables)

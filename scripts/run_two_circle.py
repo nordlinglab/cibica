@@ -240,7 +240,8 @@ if __name__ == "__main__":
         "--edges",
         choices=("boundary", "canny"),
         default="boundary",
-        help="edge extractor applied to the dark-pixel mask",
+        help="edge extractor applied to the dark-pixel mask: the morphological "
+        "internal boundary, or OpenCV's cv2.Canny",
     )
     parser.add_argument(
         "--max-images",
@@ -297,7 +298,7 @@ if __name__ == "__main__":
         type=Path,
         default=DEFAULT_OUTPUT,
         metavar="DIR",
-        help="output root; tables go to DIR/tables and the figure to DIR/figures",
+        help="output root; tables go to DIR/tables and figures to DIR/figures",
     )
     arguments = parser.parse_args()
     radii = (

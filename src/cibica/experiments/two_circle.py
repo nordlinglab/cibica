@@ -1382,6 +1382,26 @@ def lock_on_threshold(
     return float(eligible["q_lo"].iloc[0])
 
 
+def consensus_auc(single_scores, two_scores) -> float:
+    """Area under the ROC curve of the consensus score as a two-circle flag.
+
+    The probability that a single-circle region scores higher than a
+    two-circle region, ties counted as one half (the Mann-Whitney ``U``
+    divided by the number of pairs); 0.5 means the score cannot tell the two
+    apart and 1.0 that every single-circle region scores higher. NaN when
+    either group is empty.
+    """
+    single = np.asarray(single_scores, dtype=float)
+    two = np.asarray(two_scores, dtype=float)
+    single = single[np.isfinite(single)]
+    two = two[np.isfinite(two)]
+    if not single.size or not two.size:
+        return math.nan
+    greater = (single[:, None] > two[None, :]).sum()
+    ties = (single[:, None] == two[None, :]).sum()
+    return float((greater + 0.5 * ties) / (single.size * two.size))
+
+
 def summarise_two_circle(
     result: TwoCircleResult, *, n_boot: int = 2000
 ) -> dict[str, pd.DataFrame]:
@@ -1567,26 +1587,49 @@ def summarise_two_circle(
                     "n": len(subset),
                 }
             )
-    for group_name, frame in (("single_circle", single), ("two_circle", two)):
+    control = crops[crops["CIBICA_class"] == "none"] if len(crops) else crops
+    for group_name, frame in (
+        ("single_circle", single),
+        ("two_circle", two),
+        ("pure_noise", control),
+    ):
         if len(frame):
+            for statistic in ("mean", "median"):
+                consensus_rows.append(
+                    {
+                        "statistic": f"{statistic}_consensus_score {group_name}",
+                        "value": float(
+                            getattr(frame["CIBICA_consensus_score"], statistic)()
+                        ),
+                        "p_value": math.nan,
+                        "n": len(frame),
+                    }
+                )
+    # How well the score separates single- from two-circle regions, pooled
+    # and per dataset; it can flag the violated assumption only where AUC > 0.5.
+    auc_groups = [("", single, two)]
+    if len(scored):
+        auc_groups += [
+            (
+                f" {dataset}",
+                single[single["dataset"] == dataset],
+                two[two["dataset"] == dataset],
+            )
+            for dataset in sorted(scored["dataset"].unique())
+        ]
+    for suffix, single_frame, two_frame in auc_groups:
+        if len(single_frame) and len(two_frame):
             consensus_rows.append(
                 {
-                    "statistic": f"mean_consensus_score {group_name}",
-                    "value": float(frame["CIBICA_consensus_score"].mean()),
+                    "statistic": f"auc_single_vs_two_circle{suffix}",
+                    "value": consensus_auc(
+                        single_frame["CIBICA_consensus_score"],
+                        two_frame["CIBICA_consensus_score"],
+                    ),
                     "p_value": math.nan,
-                    "n": len(frame),
+                    "n": len(single_frame) + len(two_frame),
                 }
             )
-    control = crops[crops["CIBICA_class"] == "none"] if len(crops) else crops
-    if len(control):
-        consensus_rows.append(
-            {
-                "statistic": "mean_consensus_score pure_noise",
-                "value": float(control["CIBICA_consensus_score"].mean()),
-                "p_value": math.nan,
-                "n": len(control),
-            }
-        )
     tables["consensus"] = pd.DataFrame(consensus_rows)
 
     # Pure-noise control: how often each method returns a circle.
@@ -1647,6 +1690,7 @@ __all__ = [
     "circle_enters_crop",
     "classify",
     "compare_pcb_ground_truth",
+    "consensus_auc",
     "crop_edge_points",
     "crop_geometry",
     "dark_mask_otsu",

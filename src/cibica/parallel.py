@@ -85,7 +85,11 @@ def task_rng(seed: int | None, *key: object):
     return np.random.default_rng(np.random.SeedSequence(int(seed), spawn_key=spawn_key))
 
 
-def _run_here(fn, tasks, on_progress):
+def _run_here[T, R](
+    fn: Callable[[T], R],
+    tasks: list[T],
+    on_progress: Callable[[int, int], None] | None,
+) -> list[R]:
     """Run every task in this process, reporting progress in task order."""
     total = len(tasks)
     out = []

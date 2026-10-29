@@ -36,6 +36,7 @@ class QualitativeTask:
     config_name: str
     baseline: str
     seed: int | None
+    edges: str = "boundary"
 
 
 def _green_level(config_name: str) -> int:
@@ -73,7 +74,9 @@ def _score_circle(task: QualitativeTask, circle: tuple[float, float, float]) -> 
 def _run_qualitative_task(task: QualitativeTask) -> dict:
     """Estimate CIBICA and one baseline on a single frame."""
     image = _load_frame(task.data_dir, task.filename)
-    _, edge_image, edgels = preprocess_green_level(image, task.green_level)
+    _, edge_image, edgels = preprocess_green_level(
+        image, task.green_level, edges=task.edges
+    )
     cibica_circle = estimate(
         edgels,
         method="cibica",
@@ -121,6 +124,7 @@ def _score_against_baseline(
     seed: int | None,
     n_jobs: int,
     on_progress: Callable[[int, int], None] | None,
+    edges: str = "boundary",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run CIBICA and one baseline over every ground-truth frame."""
     data_path = Path(data_dir)
@@ -139,6 +143,7 @@ def _score_against_baseline(
             config_name=config_name,
             baseline=baseline,
             seed=seed,
+            edges=edges,
         )
         for frame_index, (_, truth) in enumerate(ground_truth.iterrows())
     ]
@@ -160,6 +165,7 @@ def score_cibica_vs_hough(
     *,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    edges: str = "boundary",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return ground truth and per-frame CIBICA/CHT estimates and scores.
 
@@ -174,6 +180,7 @@ def score_cibica_vs_hough(
         seed,
         n_jobs,
         on_progress,
+        edges,
     )
 
 
@@ -185,6 +192,7 @@ def score_cibica_vs_qi(
     *,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,
+    edges: str = "boundary",
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Return ground truth and per-frame CIBICA/QI estimates and scores.
 
@@ -199,4 +207,5 @@ def score_cibica_vs_qi(
         seed,
         n_jobs,
         on_progress,
+        edges,
     )

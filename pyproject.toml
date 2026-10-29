@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "cibica"
-version = "2.2.0"
+version = "3.0.0"
 description = "Circle estimation by CIBICA with example datasets."
 readme = "README.md"
 requires-python = ">=3.12.11"
@@ -48,6 +48,11 @@ dev = [
     "pytest-cov>=4.0",
     "ruff>=0.3.0",
     "mypy>=1.0",
+    # Test-only references: the beta regression is checked against statsmodels'
+    # BetaModel and internal_boundary against scikit-image's find_boundaries.
+    # The package itself imports neither; the tests skip when they are absent.
+    "statsmodels>=0.14.2",
+    "scikit-image>=0.24",
 ]
 
 [project.scripts]

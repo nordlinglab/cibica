@@ -1,9 +1,9 @@
 ---
 title: "cibica - Data Schema"
 author: "Torbjörn E. M. Nordling"
-date: "2026-07-10"
+date: "2026-10-27"
 license: "Apache-2.0"
-version: 1.1.0
+version: 1.1.1
 purpose: "Schema for the cibica example dataset: ground-truth circle annotations and region-of-interest images."
 ---
 
@@ -22,8 +22,9 @@ The dataset lives in this directory (`data/`), separate from the source code in 
 
 | Path | Contents |
 |------|----------|
-| `Ground_Truth.csv` | Derived ground-truth circle (`X`, `Y`, `R`) per frame; least-squares fit to the four perimeter points. |
-| `LabeledData.csv` | Raw manual annotations: the four sphere-perimeter points per frame (`x1..x4`, `y1..y4`). |
+| `Ground_Truth.csv` | Derived ground-truth circle (`X`, `Y`, `R`) per frame; least-squares fit to the four perimeter points of labeling pass B. |
+| `Black_Sphere_Labelling_A.csv` | Raw manual annotations of labeling pass A: the four sphere-perimeter points per frame, with crop origin and zoom scale. |
+| `Black_Sphere_Labelling_B.csv` | Raw manual annotations of labeling pass B, the pass `Ground_Truth.csv` is fitted to; same columns as pass A. |
 | `cohort.csv` | Per-participant cohort label (Parkinson's disease vs healthy control). |
 | `black_sphere_ROI/<name>.png` | Cropped black-sphere region; the circle-estimation input (144 files). |
 | `green_back_ROI/<name>.png` | Cropped green-background sample, used to characterise the background colour (HSV thresholds) for the median-filter configurations (144 files). |
@@ -31,26 +32,11 @@ The dataset lives in this directory (`data/`), separate from the source code in 
 The two image directories share the same 144 filenames; `<name>` matches the
 `Filename` column of `Ground_Truth.csv`, e.g. `879885247_20204249_Feet_R_S_1`.
 
-## Columns (`LabeledData.csv`)
-
-The raw hand-labeled perimeter points from which `Ground_Truth.csv` was derived
-(least-squares circle through the four points), one row per frame.
-
-| Column Name | Data Type | Description |
-|-------------|-----------|-------------|
-| Filename | string | Frame name with a `_Full_BlackSphere_crop.pdf` suffix; strip it to match `Ground_Truth.csv` |
-| x1..x4 | int | Column coordinates of the four perimeter points |
-| y1..y4 | int | Row coordinates of the four perimeter points |
-
-Coordinates are in the **8× up-sampled** frame used for sub-pixel labeling
-(native radii of 9–14 px appear here as 72–112 px), whereas `Ground_Truth.csv`
-reports the circle at native resolution.
-A few rows have a stray space before `_S` in `Filename` (e.g. `Feet_L _S_0`);
-normalise whitespace when joining to the other tables.
-
 ## Columns (`Black_Sphere_Labelling_{A,B}.csv`)
 
 The two manual labeling passes, one row per frame.
+`Ground_Truth.csv` is the least-squares circle through the four points of pass B
+(divided by its `scale`, 8, to return to native resolution).
 `x1..x4`, `y1..y4` are the four perimeter points in each pass's zoomed labeling
 image (pass A at `scale` 10, pass B at 8).
 

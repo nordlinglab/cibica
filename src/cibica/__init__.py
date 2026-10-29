@@ -48,6 +48,7 @@ from cibica.estimators import (
     CIBICA,
     HOUGH,
     LS_circle,
+    joint_mode_3d,
     median_3d,
     qi_2024,
     rcd,
@@ -75,7 +76,7 @@ from cibica.preprocessing import (
     preprocess_median_filter,
 )
 
-__version__ = "2.2.0"
+__version__ = "3.0.0"
 __author__ = "Torbjörn E. M. Nordling"
 __email__ = "t@nordlinglab.org"
 
@@ -96,6 +97,7 @@ __all__ = [
     "CIBICA",
     "LS_circle",
     "vectorized_XYR",
+    "joint_mode_3d",
     "median_3d",
     # baselines
     "HOUGH",

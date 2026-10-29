@@ -54,6 +54,13 @@ def best_config_stats(results, method: str) -> dict:
     best-config Jaccard, the over-frames std at the overall-best config, the
     mean FPS at each replicate's best config, and the fraction of frames the
     estimator declined and the fraction scoring zero.
+
+    ``jaccard_mean`` averages each replicate's own maximum over the
+    configurations, which is biased upward for a stochastic method (the
+    maximum of noisy means exceeds the mean of the best one). The selection-free
+    alternative is ``jaccard_mean_fixed``: the mean, over replicates and
+    frames, at the single configuration ``fixed_config`` with the highest mean
+    over all replicates. For a deterministic method the two coincide.
     """
     cfg_names = results["config_names"]
     per_rep_cfg = results[f"JaccByRepCfg_{method}"]  # (R, n_configs) mean over frames
@@ -72,6 +79,8 @@ def best_config_stats(results, method: str) -> dict:
         "jaccard_mean": float(best_j.mean()),
         "jaccard_std": float(jaccard[:, best_overall].std()),
         "jaccard_repl_std": float(best_j.std()),
+        "fixed_config": cfg_names[best_overall],
+        "jaccard_mean_fixed": float(jaccard[:, best_overall].mean()),
         "fps": float(fps_per_rep.mean()),
         "all_config_mean": float(jaccard.mean()),
         "declined": float(declined[:, best_overall].mean()),

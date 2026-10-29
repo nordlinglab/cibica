@@ -41,7 +41,10 @@ from cibica.analysis.per_configuration import (
     pooled_reference_table,
     summarise_per_configuration,
 )
-from cibica.analysis.per_subject_statistics import per_subject_statistics
+from cibica.analysis.per_subject_statistics import (
+    per_subject_statistics,
+    subject_level_contrast,
+)
 from cibica.analysis.preprocessing_throughput import end_to_end_fps
 from cibica.analysis.robust_statistics import (
     hodges_lehmann_ci,
@@ -99,6 +102,7 @@ __all__ = [
     "leave_one_subject_out",
     "pairwise_comparisons",
     "per_subject_statistics",
+    "subject_level_contrast",
     "rank_biserial",
     "reference_config_indices",
     "reference_scores",

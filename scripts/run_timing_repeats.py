@@ -6,7 +6,7 @@
 Accuracy in this study is worker-count invariant, but runtime is not: spreading
 the same work over one process per core measures aggregate throughput under
 memory-bandwidth contention rather than the per-frame latency a deployed system
-sees, and reads 20-70% lower depending on the workload. Every timing here
+sees, and reads up to about 40% lower depending on the method. Every timing here
 therefore runs with ``n_jobs=1``.
 
 Three repeat matrices are written, one row per repeat:
@@ -17,6 +17,14 @@ Three repeat matrices are written, one row per repeat:
   columns of paper Table 6.
 - ``Stats_ThroughputRepeats`` -- preprocessing over all 2,592 edge-images,
   which feeds the reported end-to-end rate rather than a numbered table.
+
+The method stage also writes ``Table3_Latency``, the latency of every timed
+frame (one row per repeat, method and frame), from which the median, p95 and
+p99 per-frame latency are pooled over the repeats the rate screen keeps.
+
+The derived end-to-end rate adds the pooled preprocessing latency to CIBICA's
+fitting latency in the method comparison, and to its latency at 500 triplets
+in the triplet-budget stage; both bases are printed.
 
 The matrices are the measurements themselves and cannot be recovered without
 re-running the timings, so they are what the repository keeps. The pooled
@@ -39,7 +47,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from cibica._cli_types import DefaultsHelpFormatter, positive_int
+from cibica._cli_types import DefaultsHelpFormatter, nonnegative_int, positive_int
 from cibica.output_naming import computer_label
 from cibica.parallel import pin_compute_threads
 
@@ -152,8 +160,13 @@ def measure_throughput(repeats):
     return {"edge_images_per_second": values}
 
 
-def measure_method_timing(repeats, seed):
-    """Fits per second per method at its best configuration (paper Table 3)."""
+def measure_method_timing(repeats, seed, latencies=None):
+    """Fits per second per method at its best configuration (paper Table 3).
+
+    When ``latencies`` is a list, one row per repeat, method and frame is
+    appended to it with the frame's latency in milliseconds at that repeat's
+    best configuration, the configuration the rate is measured on.
+    """
     import numpy as np
 
     from cibica.analysis.study_summaries import best_config_stats
@@ -170,6 +183,13 @@ def measure_method_timing(repeats, seed):
             fps = best_config_stats(results, method)["fps"]
             per_method[method].append(fps)
             rendered.append(f"{method}:{fps:.0f}")
+            if latencies is not None:
+                best = int(np.argmax(results[f"JaccByRepCfg_{method}"][0]))
+                milliseconds = 1_000.0 * results[f"Time_{method}"][:, best]
+                latencies.extend(
+                    {"Repeat": index, "Method": method, "Frame": frame, "ms": ms}
+                    for frame, ms in enumerate(milliseconds)
+                )
         print(f"  repeat {index:>2}/{repeats}: {'  '.join(rendered)}")
     return {m: np.asarray(v, dtype=float) for m, v in per_method.items()}
 
@@ -210,17 +230,91 @@ STAGES = {
 }
 
 
+LATENCY_STEM = "Table3_Latency"
+
+
+def _write_latencies(rows, output_dir):
+    """Store the per-frame latencies, which cannot be recomputed either."""
+    import pandas as pd
+
+    frame = pd.DataFrame(rows, columns=["Repeat", "Method", "Frame", "ms"])
+    frame["ms"] = frame["ms"].round(4)
+    path = _matrix_path(LATENCY_STEM, output_dir)
+    frame.to_csv(path, index=False)
+    print(f"  Saved: {path.name}")
+
+
+def _print_latencies(method_rates, output_dir):
+    """Median, p95 and p99 per-frame latency over the kept repeats."""
+    import pandas as pd
+
+    from cibica.analysis.timing_statistics import pooled_latency
+
+    path = _matrix_path(LATENCY_STEM, output_dir)
+    if not path.is_file():
+        print(f"\nPer-frame latency: no stored {path.name}; measure --stage methods")
+        return
+    frame = pd.read_csv(path)
+    rows = []
+    for method, rates in method_rates.items():
+        subset = frame[frame["Method"] == method]
+        per_repeat = [
+            subset.loc[subset["Repeat"] == repeat, "ms"].to_numpy()
+            for repeat in range(1, len(rates) + 1)
+        ]
+        stats = pooled_latency(per_repeat, rates)
+        rows.append(
+            {
+                "Method": method,
+                "n_frames": stats["n"],
+                "n_excluded_repeats": stats["n_excluded"],
+                "median_ms": round(stats["median_ms"], 3),
+                "p95_ms": round(stats["p95_ms"], 3),
+                "p99_ms": round(stats["p99_ms"], 3),
+                "max_ms": round(stats["max_ms"], 3),
+            }
+        )
+    print("\nPer-frame latency at each method's best configuration")
+    print(pd.DataFrame(rows).to_string(index=False))
+
+
+def _print_end_to_end(pooled):
+    """Derived serial end-to-end rate from the single-core repeats."""
+    from cibica.analysis.timing_statistics import pooled_end_to_end
+
+    preprocessing = pooled.get("throughput", {}).get("edge_images_per_second")
+    if preprocessing is None:
+        print("\nEnd-to-end rate: no preprocessing repeats; measure --stage throughput")
+        return
+    bases = (
+        ("method comparison", pooled.get("methods", {}).get("CIBICA")),
+        ("500 triplets", pooled.get("triplets", {}).get(500)),
+    )
+    print("\nDerived end-to-end rate (preprocessing + CIBICA, serial)")
+    for label, fitting in bases:
+        if fitting is None:
+            continue
+        out = pooled_end_to_end(preprocessing, fitting)
+        print(
+            f"  {label:>17}: {out['end_to_end_fps']:.0f} fps from the means "
+            f"({out['ms_preprocessing']:.3f} + {out['ms_fitting']:.3f} ms), "
+            f"{out['end_to_end_fps_fastest']:.0f} fps from the fastest repeats"
+        )
+
+
 def main(repeats=13, seed=42, output=DEFAULT_OUTPUT, stages=("all",), summarise=False):
     """Measure the requested stages, or pool the stored repeats without measuring."""
     pin_compute_threads()
     output_dir = Path(output)
     output_dir.mkdir(parents=True, exist_ok=True)
     wanted = set(stages)
+    latencies: list[dict] = []
     measure = {
         "throughput": lambda: measure_throughput(repeats),
-        "methods": lambda: measure_method_timing(repeats, seed),
+        "methods": lambda: measure_method_timing(repeats, seed, latencies),
         "triplets": lambda: measure_triplet_sweep(repeats, seed),
     }
+    pooled = {}
 
     for stage, (stem, heading, key_name, key_type) in STAGES.items():
         if "all" not in wanted and stage not in wanted:
@@ -231,7 +325,18 @@ def main(repeats=13, seed=42, output=DEFAULT_OUTPUT, stages=("all",), summarise=
         else:
             repeats_by_key = measure[stage]()
             _write_matrix(stem, repeats_by_key, output_dir)
+            if stage == "methods":
+                _write_latencies(latencies, output_dir)
         print(_summarise(repeats_by_key, key_name).to_string(index=False))
+        pooled[stage] = repeats_by_key
+        if stage == "methods":
+            _print_latencies(repeats_by_key, output_dir)
+
+    # A stage not measured in this call still contributes its stored repeats.
+    for stage, (stem, _heading, _key_name, key_type) in STAGES.items():
+        if stage not in pooled and _matrix_path(stem, output_dir).is_file():
+            pooled[stage] = _read_matrix(stem, output_dir, key_type)
+    _print_end_to_end(pooled)
 
     if summarise:
         print("\nPooled from the stored repeat matrices; nothing was re-measured.")
@@ -256,10 +361,13 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--seed",
-        type=positive_int,
+        type=nonnegative_int,
         default=42,
         metavar="N",
-        help="RNG seed; accuracy is identical for any seed, timing is unaffected",
+        help=(
+            "RNG seed of the stochastic methods; it selects the sampled "
+            "triplets, not what is timed"
+        ),
     )
     parser.add_argument(
         "--stage",
@@ -267,8 +375,8 @@ if __name__ == "__main__":
         choices=("all", "throughput", "methods", "triplets"),
         metavar="STAGE",
         help=(
-            "measure only this stage (throughput, methods, triplets); repeat "
-            "the option for several, omit for all"
+            "measure only this stage (throughput, methods, triplets, or all); "
+            "repeat the option for several, omit for all"
         ),
     )
     parser.add_argument(
@@ -284,7 +392,10 @@ if __name__ == "__main__":
         "--output",
         default=str(DEFAULT_OUTPUT),
         metavar="DIR",
-        help="directory holding the repeat matrices",
+        help=(
+            "directory the repeat matrices are written to, and read from with "
+            "--summarise"
+        ),
     )
     arguments = parser.parse_args()
     main(

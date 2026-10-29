@@ -131,6 +131,8 @@ def test_save_summary_tables_writes_four_tables_with_pinned_columns(
             "Jaccard_mean",
             "Jaccard_std",
             "Jaccard_repl_std",
+            "Fixed_Config",
+            "Jaccard_mean_fixed",
             "FPS",
             "Frac_declined",
             "Frac_zero",
@@ -162,6 +164,26 @@ def test_save_summary_tables_writes_four_tables_with_pinned_columns(
         path = tmp_path / name
         assert path.is_file(), name
         assert list(pd.read_csv(path).columns) == columns, name
+
+
+def test_fixed_configuration_mean_is_free_of_per_replicate_selection():
+    """Averaging each replicate's own maximum biases a stochastic method upward.
+
+    Two configurations whose replicate means alternate around 0.80 each average
+    0.80, so the unbiased best-configuration mean is 0.80; picking the better
+    configuration per replicate gives 0.81 instead.
+    """
+    results = {
+        "config_names": ["GL70", "GL72"],
+        "JaccByRepCfg_CIBICA": np.array([[0.81, 0.79], [0.79, 0.81]]),
+        "TimeByRepCfg_CIBICA": np.full((2, 2), 0.002),
+        "Jaccard_CIBICA": np.array([[0.80, 0.79], [0.80, 0.81]]),
+        "Declined_CIBICA": np.zeros((2, 2)),
+    }
+    stats = best_config_stats(results, "CIBICA")
+    assert stats["jaccard_mean"] == pytest.approx(0.81)
+    assert stats["fixed_config"] == "GL70"
+    assert stats["jaccard_mean_fixed"] == pytest.approx(0.80)
 
 
 def test_table3_and_table4_are_sorted_by_descending_accuracy(sweep_results, tmp_path):
@@ -208,7 +230,7 @@ def test_save_stats_csvs_writes_focal_and_pairwise_columns(sweep_results, tmp_pa
     ]
 
 
-def test_save_subject_tables_writes_three_participant_tables(sweep_results, tmp_path):
+def test_save_subject_tables_writes_four_participant_tables(sweep_results, tmp_path):
     summaries = save_subject_tables(sweep_results, output_dir=tmp_path, tag=TAG)
     assert set(summaries) == set(METHODS)
     assert summaries["CIBICA"]["n_subjects"] == len(SUBJECTS)
@@ -246,8 +268,14 @@ def test_save_subject_tables_writes_three_participant_tables(sweep_results, tmp_
     ]
     assert list(loso["Baseline"]) == [m for m in METHODS if m != "CIBICA"]
 
+    level = pd.read_csv(tmp_path / f"Stats_SubjectLevel_{TAG}.csv")
+    assert list(level["Baseline"]) == [m for m in METHODS if m != "CIBICA"]
+    assert (level["n_subjects"] == len(SUBJECTS)).all()
+    for column in ("mean_diff", "HL", "boot_CI_lo", "boot_CI_hi", "p_wilcoxon"):
+        assert column in level.columns
 
-def test_save_throughput_table_merges_the_measurement_with_the_fitting_time(
+
+def test_save_throughput_table_stores_the_preprocessing_measurement_only(
     sweep_results, tmp_path
 ):
     throughput = {
@@ -264,15 +292,15 @@ def test_save_throughput_table_merges_the_measurement_with_the_fitting_time(
     merged = save_throughput_table(
         sweep_results, throughput, output_dir=tmp_path, tag=TAG, focal="CIBICA"
     )
-    # 1 ms preprocessing + 2 ms fitting -> 3 ms, i.e. about 333 fps end to end.
-    assert merged["ms_preprocessing"] == pytest.approx(1.0)
-    assert merged["ms_fitting"] == pytest.approx(2.0, abs=1e-6)
-    assert merged["end_to_end_fps"] == pytest.approx(1000.0 / 3.0, rel=1e-3)
+    assert merged["ms_per_edge_image"] == pytest.approx(1.0)
 
     df = pd.read_csv(tmp_path / f"Stats_Throughput_{TAG}.csv")
-    assert df.loc[0, "fitting_method"] == "CIBICA"
-    for column in ("ms_per_edge_image", "end_to_end_fps", "ms_preprocessing"):
-        assert column in df.columns
+    assert "ms_per_edge_image" in df.columns
+    # The sweep times the estimator under one worker per core, so it must not
+    # supply the fitting stage of the reported end-to-end rate; that rate is
+    # derived by run_timing_repeats.py from the single-core repeats.
+    for column in ("end_to_end_fps", "ms_fitting", "ms_total", "fitting_method"):
+        assert column not in df.columns
 
 
 def test_save_cohort_table_uses_the_manuscript_column_order(sweep_results, tmp_path):
@@ -305,3 +333,13 @@ def test_save_cohort_table_skips_when_the_mapping_is_absent(sweep_results, tmp_p
     missing = tmp_path / "missing.csv"
     assert save_cohort_table(sweep_results, missing, tmp_path, TAG) is None
     assert not list(tmp_path.glob("Table5_Cohort_*.csv"))
+
+
+def test_save_edge_counts_table_stores_the_figure_11_counts(sweep_results, tmp_path):
+    from cibica.analysis.tables import save_edge_counts_table
+
+    save_edge_counts_table(sweep_results, output_dir=tmp_path, tag=TAG)
+    table = pd.read_csv(tmp_path / f"EdgeCounts_{TAG}.csv")
+    assert list(table.columns) == ["Filename", *sweep_results["config_names"]]
+    assert list(table["Filename"]) == sweep_results["filenames"]
+    assert (table[sweep_results["config_names"]] == 60).all().all()

@@ -1,13 +1,15 @@
 # Copyright 2026 Esteban Román Catafau and Torbjörn E. M. Nordling
 # SPDX-License-Identifier: Apache-2.0
 """
-CIBICA: circle fitting using triplet combinations with median estimation
+CIBICA: circle fitting using triplet combinations with a joint-mode consensus
 
-Reference:
-    This implementation uses geometric circle fitting through three points.
-    The median-based approach provides robustness to outliers.
+Circles are fitted through sampled triplets of edge points, the most frequent
+whole-pixel ``(r, x, y)`` triple is taken as the consensus, and the consensus is
+refined by least squares on its inlier edge points (:func:`joint_mode_3d`).
+:func:`median_3d` is a deprecated alias kept for existing callers.
 """
 
+import warnings
 from itertools import combinations
 
 import numpy as np
@@ -140,7 +142,7 @@ def vectorized_XYR(
     cy = ((p1[:, 0] - p2[:, 0]) * cd - (p2[:, 0] - p3[:, 0]) * bc) / det
 
     # Filter 2 — Center bounds, off by default. The test uses the rounded
-    # centre so that a bound admits exactly the centres median_3d compares.
+    # centre so that a bound admits exactly the centres joint_mode_3d compares.
     cx_enc = np.round(cx)
     cy_enc = np.round(cy)
     deletes = np.where(
@@ -169,9 +171,9 @@ def vectorized_XYR(
     return cx, cy, radius
 
 
-def median_3d(x, y, r, xmax=100, ymax=100):
+def joint_mode_3d(x, y, r):
     """
-    Calculate median in 3D space (x, y, r) using mode-based approach.
+    Joint mode of the circle parameters (x, y, r).
 
     Takes the most frequent rounded ``(r, x, y)`` triple.
     Ties resolve to the lexicographically smallest triple.
@@ -180,18 +182,31 @@ def median_3d(x, y, r, xmax=100, ymax=100):
     ----------
     x, y, r : numpy.ndarray
         Arrays of circle parameters
-    xmax, ymax : int
-        Unused; retained so existing callers keep working.
 
     Returns
     -------
     x_out, y_out, r_out : float
-        Median circle parameters
+        Parameters of the most frequent rounded circle
     """
     X = np.round(np.c_[r, x, y], 0)
     rows, counts = np.unique(X, axis=0, return_counts=True)
     r_out, x_out, y_out = rows[np.argmax(counts)]
     return float(x_out), float(y_out), float(r_out)
+
+
+def median_3d(x, y, r, xmax=100, ymax=100):
+    """
+    Deprecated alias of :func:`joint_mode_3d`; the result is a mode.
+
+    ``xmax`` and ``ymax`` are ignored. The alias will be removed in the next
+    major release.
+    """
+    warnings.warn(
+        "median_3d returns a joint mode, not a median; use joint_mode_3d",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return joint_mode_3d(x, y, r)
 
 
 def LS_circle(x, y):
@@ -240,9 +255,10 @@ def CIBICA(
 
     Main function that implements the complete CIBICA algorithm:
     1. Sample random triplets of edge points
-    2. Fit circles through each triplet
-    3. Estimate final circle using median
-    4. Optionally refine using least squares
+    2. Fit circles through each triplet and discard those outside the radius
+       bounds
+    3. Take the most frequent whole-pixel (r, x, y) triple as the consensus
+    4. Optionally refine by least squares on the edge points within 1.5 px
 
     Parameters
     ----------
@@ -261,9 +277,8 @@ def CIBICA(
         Lower bound on center coordinate (default: -inf, i.e. no bound).
     margin : float, optional
         Slack added above xmax/ymax for the centre bound (default: inf,
-        i.e. no bound). The
-        defaults confine centres to the image rectangle, which is the only
-        region median_3d can encode; see vectorized_XYR.
+        i.e. no bound). Finite ``minval`` and ``margin`` confine centres
+        to the image rectangle; see vectorized_XYR.
     rng : numpy.random.Generator, int, or None, optional
         Source of randomness for triplet sampling. Pass an explicit generator
         when calling from worker processes so results do not depend on
@@ -276,8 +291,8 @@ def CIBICA(
 
     Examples
     --------
-    >>> from preprocessing import extract_edgels
-    >>> edgels, _ = extract_edgels(image, method='green_level', threshold=76)
+    >>> from cibica.preprocessing import preprocess_green_level
+    >>> _, _, edgels = preprocess_green_level(image, green_level=72)
     >>> x, y, r = CIBICA(edgels, n_triplets=10000)
     """
     if len(coord) < 3:
@@ -296,8 +311,8 @@ def CIBICA(
         p1, p2, p3, xmax, ymax, rmin=rmin, rmax=rmax, minval=minval, margin=margin
     )
 
-    # Get median estimate
-    XYR = median_3d(cx, cy, radius, xmax, ymax)
+    # Joint-mode consensus
+    XYR = joint_mode_3d(cx, cy, radius)
 
     if not refinement:
         return XYR[1], XYR[0], XYR[2]  # Return as x, y, r

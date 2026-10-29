@@ -203,15 +203,17 @@ def test_fig7_error_histogram_written(labeling_arrays, tmp_path):
 
 
 def test_fig11_edge_counts_and_figure(tmp_path):
-    counts = compute_edge_counts(DATA_DIR, "GL82")  # paper reference config
+    counts = compute_edge_counts(DATA_DIR, "GL72")  # paper Fig. 11 config
     assert counts.size == 144
     assert counts.min() >= 3  # every frame yields a usable edge set
     assert 50 <= float(np.median(counts)) <= 150
-    # Manuscript text: the majority of frames have < 100k triplet combinations
-    # while some exceed 1,000,000 (which holds at GL82 but not GL80).
+    # Manuscript text at GL72 with the boundary extractor: most frames have
+    # < 100k triplet combinations, none exceeds 1,000,000, and every frame has
+    # more than 20,000, so all take the rejection-sampling path.
     combos = counts * (counts - 1) * (counts - 2) / 6.0
-    assert (combos < 1e5).sum() > 72  # majority under 100k
-    assert (combos > 1e6).sum() >= 1  # at least one frame over 1M
+    assert (combos < 1e5).sum() == 128
+    assert combos.max() < 1e6
+    assert combos.min() > 20_000
     paths = plot_pixel_combinations(
         counts, output_dir=str(tmp_path), date_tag="repro", progress=_QUIET
     )
@@ -228,7 +230,7 @@ def test_table6_triplet_sweep(sweep_result):
     rows, out = sweep_result
     assert set(rows) == {500, 1000, 2000, 5000, 10000}
     # CIBICA accuracy is high and essentially flat across triplet counts.
-    # With the internal-boundary edge extractor (2.2.0) the GL80 mean sits at
+    # With the internal-boundary edge extractor (3.0.0) the GL80 mean sits at
     # 0.913-0.915 for every N; the Canny pipeline gave 0.89-0.90.
     for n, row in rows.items():
         assert 0.90 <= row["mean_jaccard"] <= 0.93, f"N={n}"

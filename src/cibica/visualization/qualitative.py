@@ -3,11 +3,11 @@
 """Paper Figs. 15 and 16 --- qualitative detection overlays.
 
 Fig. 15 (:func:`plot_visual_comparison`) contrasts CIBICA against the classical
-Circle Hough Transform (CHT) at GL80 on four representative frames: two
+Circle Hough Transform (CHT) at GL72 on four representative frames: two
 typical cases where CIBICA succeeds and CHT misses, and two challenging cases
 (the frames where both methods score lowest) where both lose accuracy.
 
-Fig. 16 (:func:`plot_failure_gallery`) is a failure-case gallery at GL82,
+Fig. 16 (:func:`plot_failure_gallery`) is a failure-case gallery at GL72,
 overlaying CIBICA and the robust algebraic baseline of Qi et al. (2024): the
 top row shows CIBICA's worst frames, the bottom row shows the frames where Qi
 et al. outperforms CIBICA by the widest margin.

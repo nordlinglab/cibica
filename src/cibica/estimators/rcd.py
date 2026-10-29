@@ -18,7 +18,7 @@ edge pixels on it reaches the circumference-normalised ratio test
 the edge set (Step 6). Termination is by a counter of consecutive failures
 (``T_f``) or by the edge set shrinking below ``T_min``, not by a fixed
 iteration budget. The RANSAC-style inlier-count selection this module
-replaced in cibica 2.2.0 had neither the fourth-point test nor the
+replaced in cibica 3.0.0 had neither the fourth-point test nor the
 normalised acceptance.
 
 Two readings of the printed text are fixed here:
@@ -31,9 +31,19 @@ Two readings of the printed text are fixed here:
   edge set when a candidate fails the ratio test. They are returned, since
   otherwise the edge set would empty after a few hundred failures.
 
-:func:`rcd` returns the first accepted circle; Step 6 only prepares the search
-for further circles, so it cannot change the first detection, and
-:func:`rcd_detect_all` runs it.
+The paper detects every circle in the image, whereas an estimator needs one.
+Which one :func:`rcd` returns is set by ``select``, cibica's addition:
+
+- ``"first"`` (default) stops at the first true circle. Step 6 only prepares
+  the search for further circles, so it cannot change this circle; the search
+  is cheapest, and the result depends on which circle the samples happen to
+  verify first.
+- ``"strongest"`` runs Steps 1-6 to the paper's stopping rule and returns the
+  true circle with the most edge pixels on it at Step 5 (``n_p``), the
+  earliest on a tie, so the result does not depend on the detection order.
+  Every region then costs ``T_f`` further failures after its last detection.
+- ``"all"`` runs the same complete search and returns every true circle in
+  order, the paper's own output (as :func:`rcd_detect_all`).
 
 The paper's experimental thresholds (Section III) are the defaults: T_f =
 30000, T_min = 60, T_a = 20, T_d = 1, T_r = 0.60 (astronomy image: T_a = 10,
@@ -50,10 +60,17 @@ from cibica._constraints import Constraints, report_active, reporting_enabled
 from cibica._rng import resolve_rng
 from cibica._sentinel import NO_CIRCLE_CENTER, NO_RADIUS
 
-__all__ = ["rcd", "rcd_detect_all"]
+__all__ = ["SELECTIONS", "rcd", "rcd_detect_all"]
+
+#: The ``select`` rules of :func:`rcd`; see the module docstring.
+SELECTIONS = ("first", "strongest", "all")
 
 #: ``(a, b, r)`` in the coordinate order of the input points.
 _Params = tuple[float, float, float]
+
+#: A Step-6 detection: its parameters, the number of edge pixels on it at
+#: Step 5 (``n_p``), and whether it satisfied the constraints.
+_Detection = tuple[_Params, int, bool]
 
 #: The four leave-one-out triplets in the paper's order: C_123 with v4 as the
 #: fourth pixel, then C_124/v3, C_134/v2, C_234/v1 (Section II.B).
@@ -115,18 +132,17 @@ def _search(
     rng,
     cons: Constraints,
     max_circles: int | None,
-) -> tuple[list[_Params], _Params | None]:
-    """Run Steps 1-6 and return the accepted circles in detection order.
+) -> list[_Detection]:
+    """Run Steps 1-6 and return every detection in detection order.
 
-    Also returns the first circle that passed Step 5 but was rejected by
-    ``cons`` before any circle was accepted, which is what an unconstrained
-    search would have returned; ``None`` when the bounds did not change the
-    first detection.
+    Detections the constraints reject are included, marked as such, so a
+    caller can tell what an unconstrained search would have returned. The
+    search stops after ``max_circles`` accepted detections when it is given.
     """
     generator = resolve_rng(rng)
     points = np.asarray(edgels, dtype=float)
-    accepted: list[_Params] = []
-    first_rejected: _Params | None = None
+    detections: list[_Detection] = []
+    n_accepted = 0
     active = np.ones(len(points), dtype=bool)
     f = 0
     while f < T_f and int(active.sum()) >= max(T_min, 4):
@@ -155,35 +171,46 @@ def _search(
         # resets, so the search moves on to the next circle instead of
         # re-detecting this one. The centre is (a, b) = (row, col), so x = b
         # and y = a for the bounds.
-        if cons.accepts(b, a, r):
-            accepted.append((a, b, r))
-            if max_circles is not None and len(accepted) >= max_circles:
+        accepts = cons.accepts(b, a, r)
+        detections.append(((a, b, r), len(members), accepts))
+        if accepts:
+            n_accepted += 1
+            if max_circles is not None and n_accepted >= max_circles:
                 break
-        elif not accepted and first_rejected is None:
-            first_rejected = (a, b, r)
         active[members] = False
         active[pick] = False
         f = 0
-    return accepted, first_rejected
+    return detections
+
+
+def _pick(detections: list[_Detection], select: str) -> _Params | None:
+    """The first, or the best-supported (earliest on a tie), detection."""
+    if not detections:
+        return None
+    if select == "strongest":
+        return max(detections, key=lambda d: d[1])[0]
+    return detections[0][0]
+
+
+def _check_select(select: str) -> None:
+    if select not in SELECTIONS:
+        raise ValueError(f"select must be one of {SELECTIONS}, got {select!r}")
 
 
 def _report(
-    method: str,
-    cons: Constraints,
-    accepted: list[_Params],
-    first_rejected: _Params | None,
+    method: str, cons: Constraints, detections: list[_Detection], select: str
 ) -> None:
-    """Say on stderr when a bound changed the first detection, if enabled."""
-    if first_rejected is None or cons.is_empty or not reporting_enabled():
+    """Say on stderr when a bound changed the selected detection, if enabled."""
+    if cons.is_empty or not reporting_enabled():
         return
-    a, b, r = first_rejected
-    free_xyr = (b, a, r)
-    best_xyr = (
-        None if not accepted else (accepted[0][1], accepted[0][0], accepted[0][2])
-    )
-    violated = cons.violation(*free_xyr)
+    free = _pick(detections, select)
+    best = _pick([d for d in detections if d[2]], select)
+    if free is None or free == best:
+        return
+    violated = cons.violation(free[1], free[0], free[2])
     if violated is not None:
-        report_active(method, violated, best_xyr, free_xyr)
+        best_xyr = None if best is None else (best[1], best[0], best[2])
+        report_active(method, violated, best_xyr, (free[1], free[0], free[2]))
 
 
 def rcd_detect_all(
@@ -234,11 +261,11 @@ def rcd_detect_all(
         the companion study, which :func:`cibica.estimate` applies by default.
     """
     cons = constraints if constraints is not None else Constraints()
-    accepted, first_rejected = _search(
-        edgels, T_f, T_min, T_a, T_d, T_r, rng, cons, max_circles
-    )
-    _report("RCD", cons, accepted, first_rejected)
-    return [(np.array([b, a]), float(r)) for a, b, r in accepted]
+    detections = _search(edgels, T_f, T_min, T_a, T_d, T_r, rng, cons, max_circles)
+    _report("RCD", cons, detections, "first")
+    return [
+        (np.array([b, a]), float(r)) for (a, b, r), _, accepts in detections if accepts
+    ]
 
 
 def rcd(
@@ -250,11 +277,14 @@ def rcd(
     T_r: float = 0.60,
     rng=None,
     constraints: Constraints | None = None,
-) -> tuple[np.ndarray, float]:
-    """Fit one circle to edge points with Randomized Circle Detection.
+    select: str = "first",
+) -> tuple[np.ndarray, float] | list[tuple[np.ndarray, float]]:
+    """Fit a circle to edge points with Randomized Circle Detection.
 
-    The single-circle form of :func:`rcd_detect_all`: the first circle that
-    passes the ratio test of Step 5 (and the optional bounds) is returned.
+    ``select`` chooses which true circle is returned (module docstring):
+    ``"first"`` stops at the first true circle, ``"strongest"`` runs the
+    complete search and returns the true circle with the most edge pixels on
+    it at Step 5, and ``"all"`` returns every true circle, as published.
 
     Args:
         edgels: Edge points of shape ``(n, 2)`` as ``[[row, col], ...]``.
@@ -266,29 +296,33 @@ def rcd(
         rng: ``numpy.random.Generator``, integer seed, or ``None``.
         constraints: Optional :class:`cibica.Constraints`; see
             :func:`rcd_detect_all`.
+        select: ``"first"`` (default), ``"strongest"`` or ``"all"``.
 
     Returns:
         The centre as ``[x_col, y_row]`` and the radius. Returns
         (``[nan, nan]``, ``nan``) when no circle passes the ratio test within
         ``T_f`` failures or fewer than ``T_min`` edge points are given; test
-        it with :func:`cibica.is_no_circle`.
+        it with :func:`cibica.is_no_circle`. With ``select="all"``, the list of
+        ``([x_col, y_row], r)`` pairs of :func:`rcd_detect_all` instead.
+
+    Raises:
+        ValueError: For a ``select`` not in :data:`SELECTIONS`.
 
     Examples:
         >>> theta = np.linspace(0, 2 * np.pi, 400)
         >>> edgels = np.column_stack([80 + 60 * np.sin(theta), 80 + 60 * np.cos(theta)])
         >>> center, radius = rcd(edgels, rng=0)
     """
-    detected = rcd_detect_all(
-        edgels,
-        T_f=T_f,
-        T_min=T_min,
-        T_a=T_a,
-        T_d=T_d,
-        T_r=T_r,
-        rng=rng,
-        constraints=constraints,
-        max_circles=1,
-    )
-    if not detected:
+    _check_select(select)
+    cons = constraints if constraints is not None else Constraints()
+    max_circles = 1 if select == "first" else None
+    detections = _search(edgels, T_f, T_min, T_a, T_d, T_r, rng, cons, max_circles)
+    _report("RCD", cons, detections, "first" if select == "all" else select)
+    accepted = [d for d in detections if d[2]]
+    if select == "all":
+        return [(np.array([b, a]), float(r)) for (a, b, r), _, _ in accepted]
+    best = _pick(accepted, select)
+    if best is None:
         return NO_CIRCLE_CENTER(), NO_RADIUS
-    return detected[0]
+    a, b, r = best
+    return np.array([b, a]), float(r)

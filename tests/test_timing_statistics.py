@@ -180,3 +180,57 @@ def test_the_cap_limits_fineness_without_blocking_coarsening():
 def test_round_to_spread_matches_the_formatter():
     assert round_to_spread(2226.3, 20.8) == 2230.0
     assert round_to_spread(120.4, 0.5) == 120.0
+
+
+def test_latency_percentiles_report_median_and_tail():
+    from cibica.analysis.timing_statistics import latency_percentiles
+
+    milliseconds = np.arange(1.0, 101.0)
+    out = latency_percentiles(milliseconds)
+    assert out["n"] == 100
+    assert out["median_ms"] == pytest.approx(50.5)
+    assert out["p95_ms"] == pytest.approx(np.percentile(milliseconds, 95))
+    assert out["p99_ms"] == pytest.approx(np.percentile(milliseconds, 99))
+    assert out["max_ms"] == 100.0
+
+
+def test_latency_percentiles_reject_an_empty_sample():
+    from cibica.analysis.timing_statistics import latency_percentiles
+
+    with pytest.raises(ValueError):
+        latency_percentiles([])
+
+
+def test_end_to_end_rate_comes_from_the_screened_single_core_repeats():
+    """The derived rate adds the stage latencies of the pooled repeats."""
+    from cibica.analysis.timing_statistics import pooled_end_to_end
+
+    preprocessing = [*TIGHT, CONTENDED]  # edge-images per second
+    fitting = [2000.0, 2010.0, 1990.0, 2005.0, 1995.0]
+    out = pooled_end_to_end(preprocessing, fitting)
+    kept = np.asarray(TIGHT)
+    expected = 1000.0 / (1000.0 / kept.mean() + 1000.0 / np.mean(fitting))
+    assert out["end_to_end_fps"] == pytest.approx(expected)
+    fastest = 1000.0 / (1000.0 / max(TIGHT) + 1000.0 / max(fitting))
+    assert out["end_to_end_fps_fastest"] == pytest.approx(fastest)
+    assert out["n_excluded_preprocessing"] == 1
+    assert out["n_excluded_fitting"] == 0
+
+
+def test_pooled_latency_drops_the_frames_of_a_contended_repeat():
+    """A repeat discarded by its rate also leaves the latency pool."""
+    from cibica.analysis.timing_statistics import pooled_latency
+
+    rates = [*TIGHT, CONTENDED]
+    latencies = [np.full(4, 1.0) for _ in TIGHT] + [np.full(4, 50.0)]
+    out = pooled_latency(latencies, rates)
+    assert out["n"] == 4 * len(TIGHT)
+    assert out["max_ms"] == 1.0
+    assert out["n_excluded"] == 1
+
+
+def test_pooled_latency_needs_one_latency_vector_per_repeat():
+    from cibica.analysis.timing_statistics import pooled_latency
+
+    with pytest.raises(ValueError):
+        pooled_latency([np.ones(3)], [1.0, 2.0])

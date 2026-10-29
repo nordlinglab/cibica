@@ -14,6 +14,8 @@ caller's Matplotlib configuration.
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 # Per-method colour (colourblind-friendly), marker (greyscale separation), and
 # dash pattern (separation when markers overlap).
 COLORS: dict[str, str] = {
@@ -40,7 +42,7 @@ LINESTYLES: dict[str, object] = {
     "QI": (0, (3, 1, 1, 1)),
 }
 
-RCPARAMS: dict[str, object] = {
+RCPARAMS: dict[str, Any] = {
     "font.family": "DejaVu Sans",
     "font.size": 11,
     "axes.titlesize": 13,
@@ -70,7 +72,8 @@ def apply_publication_style() -> None:
     """Apply the journal figure settings to the active Matplotlib session."""
     import matplotlib.pyplot as plt
 
-    plt.rcParams.update(RCPARAMS)
+    # rcParams is typed with Literal keys; RCPARAMS holds only valid ones.
+    cast(Any, plt.rcParams).update(RCPARAMS)
 
 
 __all__ = ["COLORS", "LINESTYLES", "MARKERS", "RCPARAMS", "apply_publication_style"]

@@ -17,6 +17,8 @@ constraint layer, and the study-scale thresholds the unified API applies.
 
 from __future__ import annotations
 
+import importlib
+
 import numpy as np
 import pytest
 from paper_examples import (
@@ -143,6 +145,118 @@ def test_rcd_declines_below_t_min():
 # ===========================================================================
 # The adapter: constraints and study-scale thresholds.
 # ===========================================================================
+
+
+def _two_separate_circles():
+    """Two circles side by side, of 182 and 151 edge points.
+
+    Their supports are close enough that either is verified first, depending
+    on the seed, so the test separates "first detected" from "best supported".
+    """
+    return np.vstack([digital_circle(60, 60, 30), digital_circle(150, 60, 25)])
+
+
+def _searches():
+    """Each single-circle form with its module's search and the study inputs."""
+    # The package re-exports the functions under the module names, so the
+    # modules holding the search are imported by their full path.
+    rcd_module = importlib.import_module("cibica.estimators.rcd")
+    rht_module = importlib.import_module("cibica.estimators.rht")
+
+    rht_kwargs = dict(RHT_STUDY_PARAMS, m_min=30)
+    rcd_kwargs = dict(RCD_STUDY_PARAMS, T_r=0.6)
+    return (
+        (
+            rht,
+            rht_kwargs,
+            lambda points, seed: rht_module._search(
+                points, *rht_kwargs.values(), seed, Constraints(), None
+            ),
+        ),
+        (
+            rcd,
+            rcd_kwargs,
+            lambda points, seed: rcd_module._search(
+                points, *rcd_kwargs.values(), seed, Constraints(), None
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_select_strongest_returns_the_best_supported_detection(seed):
+    """``select="strongest"`` runs the search to its published end.
+
+    Both papers reset and continue after a detection (RHT Step 9, RCD Step
+    6), so which circle is verified first depends on the sampling order.
+    "strongest" returns the detection with the most edge points on it at
+    verification, the earliest on a tie.
+    """
+    points = _two_separate_circles()
+    for fn, kwargs, search in _searches():
+        detections = search(points, seed)
+        assert len(detections) == 2, (fn.__name__, seed)
+        (a, b, r), _, _ = max(detections, key=lambda d: d[1])
+        center, radius = fn(points, rng=seed, select="strongest", **kwargs)
+        assert radius == pytest.approx(r), (fn.__name__, seed)
+        assert center == pytest.approx([b, a]), (fn.__name__, seed)
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_select_first_is_the_default_and_returns_the_first_detection(seed):
+    """The default stops at the first accepted circle, the study's setting."""
+    points = _two_separate_circles()
+    for fn, kwargs, search in _searches():
+        (a, b, r), _, _ = search(points, seed)[0]
+        for center, radius in (
+            fn(points, rng=seed, **kwargs),
+            fn(points, rng=seed, select="first", **kwargs),
+        ):
+            assert radius == pytest.approx(r), (fn.__name__, seed)
+            assert center == pytest.approx([b, a]), (fn.__name__, seed)
+
+
+@pytest.mark.parametrize("seed", range(4))
+def test_select_all_returns_every_detection_as_published(seed):
+    """``select="all"`` gives the papers' multi-circle output, in order."""
+    points = _two_separate_circles()
+    for fn, kwargs, search in _searches():
+        found = fn(points, rng=seed, select="all", **kwargs)
+        detections = search(points, seed)
+        assert len(found) == len(detections), (fn.__name__, seed)
+        for (center, radius), ((a, b, r), _, _) in zip(found, detections):
+            assert radius == pytest.approx(r), (fn.__name__, seed)
+            assert center == pytest.approx([b, a]), (fn.__name__, seed)
+
+
+def test_select_rejects_an_unknown_rule():
+    points = _two_separate_circles()
+    for fn, kwargs, _ in _searches():
+        with pytest.raises(ValueError, match="select"):
+            fn(points, rng=0, select="largest", **kwargs)
+
+
+def test_estimate_passes_select_but_not_all():
+    """The unified API returns one circle, so it takes "first" or "strongest"."""
+    points = _two_separate_circles()
+    for method in ("rht", "rcd"):
+        x, y, r = cibica.estimate(points, method=method, seed=3, select="strongest")
+        assert r > 0, method
+        with pytest.raises(ValueError, match="select"):
+            cibica.estimate(points, method=method, seed=3, select="all")
+
+
+def test_best_supported_detection_is_not_always_the_first():
+    """On this input the first verified circle is the weaker one for some seeds,
+    so returning the first detection would differ from the published search."""
+    points = _two_separate_circles()
+    for fn, _, search in _searches():
+        later = 0
+        for seed in range(12):
+            detections = search(points, seed)
+            if max(detections, key=lambda d: d[1]) is not detections[0]:
+                later += 1
+        assert later > 0, fn.__name__
 
 
 def _study_region(cx=25.0, cy=24.0, r=12.0):

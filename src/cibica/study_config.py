@@ -32,7 +32,7 @@ METHOD_ID: dict[str, int] = {method: index for index, method in enumerate(METHOD
 # over. Scores at these three configs are the per-image unit of analysis.
 # Reference windows of three neighbouring green levels. The window depends on
 # the edge extractor, never on the fitting method: the morphological internal
-# boundary (cibica >= 2.2.0) peaks at GL70-GL74 for every method, the Canny
+# boundary (cibica >= 3.0.0) peaks at GL70-GL74 for every method, the Canny
 # detector of earlier versions at GL80-GL84, and GL76-GL80 is the shared window
 # that costs either extractor the least relative to its own optimum (at most
 # 0.005 in mean Jaccard index), used for the fixed-preprocessing comparison.

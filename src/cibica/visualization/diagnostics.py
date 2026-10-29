@@ -81,7 +81,7 @@ def plot_focal_stats(focal_stats, output_dir="."):
 
 
 def plot_fps(results, output_dir="."):
-    """FigS4 — Horizontal bar: FPS per method (GL80/GL82/GL84 average).
+    """FigS4 — Horizontal bar: FPS per method (reference-window average).
 
     Supplementary diagnostic; not a numbered figure in the paper.
     """

@@ -40,7 +40,7 @@ def _count_edgels(task: EdgeCountTask) -> int | None:
 
 def compute_edge_counts(
     data_dir: str | Path,
-    config_name: str = "GL82",
+    config_name: str = "GL72",
     *,
     n_jobs: int = 1,
     on_progress: Callable[[int, int], None] | None = None,

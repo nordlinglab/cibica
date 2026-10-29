@@ -5,6 +5,7 @@
 from cibica.estimators.cibica import (
     CIBICA,
     LS_circle,
+    joint_mode_3d,
     median_3d,
     sample_triplets,
     vectorized_XYR,
@@ -13,6 +14,7 @@ from cibica.estimators.cibica import (
 __all__ = [
     "CIBICA",
     "LS_circle",
+    "joint_mode_3d",
     "median_3d",
     "sample_triplets",
     "vectorized_XYR",

@@ -22,6 +22,12 @@ one figure::
     cibica compare foot.png                        # all five, print estimates
     cibica compare foot.png -m cibica,qi -o fig    # two methods -> fig.pdf
 
+The ``histogram`` subcommand redraws paper Fig. 8 from a stored series of
+Jaccard coefficients, so its presentation can be changed without re-running
+the analysis::
+
+    cibica histogram jaccards.csv -o Fig8.pdf
+
 Estimated circles are printed to stdout as ``x y r`` (column centre, row
 centre, radius, in pixels). Use ``-o/--output FILE`` to also save the result;
 the format follows the file extension: ``.json``, ``.csv``/``.txt``,
@@ -37,10 +43,11 @@ stderr carries diagnostics, exit codes are 0 (success) / 1 (no circle found) /
 is emitted so ``NO_COLOR`` is honoured trivially.
 
 The package splits the interface into the parser
-(:mod:`cibica.cli._parser`), the options every subcommand shares plus their
-cross-validation (:mod:`cibica.cli._options`), the single-method path
-(:mod:`cibica.cli.estimate_command`), and the multi-method path
-(:mod:`cibica.cli.compare`). :func:`main` is the only entry point callers need.
+(:mod:`cibica.cli._parser`), the options the estimating subcommands share plus
+their cross-validation (:mod:`cibica.cli._options`), the single-method path
+(:mod:`cibica.cli.estimate_command`), the multi-method path
+(:mod:`cibica.cli.compare`), and the figure path (:mod:`cibica.cli.figures`).
+:func:`main` is the only entry point callers need.
 """
 
 from __future__ import annotations

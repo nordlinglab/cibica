@@ -90,6 +90,33 @@ def _create_constraint_matrix(X):
     return N_H
 
 
+def _normalize(xi, N_H):
+    """
+    Scale the coefficient vector to the paper's constraint xi^T N_H xi = 1.
+
+    Qi et al. (2024, eq. 5) fix the scale of the eigenvector by the
+    hyperaccurate constraint, and the convergence test on the change in xi
+    depends on that scale. The sign is fixed so that A >= 0, since the
+    eigenvector is defined only up to sign.
+
+    Parameters
+    ----------
+    xi : numpy.ndarray
+        Coefficient vector [A, B, C, D] of shape (4,)
+    N_H : numpy.ndarray
+        Constraint matrix of shape (4, 4)
+
+    Returns
+    -------
+    xi : numpy.ndarray
+        Normalized coefficient vector
+    """
+    q = float(xi @ N_H @ xi)
+    # Fall back to unit norm if the constraint form degenerates.
+    xi = xi / np.sqrt(q) if q > 1e-300 else xi / np.linalg.norm(xi)
+    return -xi if xi[0] < 0 else xi
+
+
 def _update_weights(residuals, k0=1.5, k1=2.5):
     """
     Update weights using Huber-type robust weighting function.
@@ -118,10 +145,7 @@ def _update_weights(residuals, k0=1.5, k1=2.5):
 
     # A (near-)perfect fit drives the median absolute residual to zero, and
     # dividing by it yields inf/nan weights. With no scale there is nothing
-    # to downweight, so keep the weights uniform. Note this guards the
-    # division only: on noiseless input the solve still diverges (the
-    # generalised eigenproblem is ill-conditioned once the algebraic
-    # residuals vanish), which is what the divergence check below catches.
+    # to downweight, so keep the weights uniform.
     if not np.isfinite(sigma0) or sigma0 <= np.finfo(float).tiny:
         return np.ones_like(residuals)
 
@@ -211,8 +235,8 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
     # Create constraint matrix
     N_H = _create_constraint_matrix(X)
 
-    # Initialize weights (identity matrix = uniform weights)
-    W = np.eye(len(edgels))
+    # Initialize weights (uniform weights)
+    w = np.ones(len(edgels))
 
     # Initialize parameters
     xi_prev = np.zeros(4)
@@ -221,16 +245,24 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
     for iteration in range(max_iterations):
         # Solve constrained generalized eigenvalue problem
         # M * xi = lambda * xi, where M = N_H^(-1) * X^T * W * X
-        M = linalg.solve(N_H, X.T @ W @ X)
+        # X.T @ diag(w) @ X, formed without materialising diag(w).
+        M = linalg.solve(N_H, X.T @ (w[:, None] * X))
 
         # Compute eigenvalues and eigenvectors
         eigenvalues, eigenvectors = linalg.eig(M)
 
-        # Select eigenvector corresponding to smallest positive eigenvalue
-        positive_indices = [i for i, val in enumerate(eigenvalues.real) if val > 0]
+        # Select the eigenvector of the smallest positive eigenvalue (eq. 9).
+        # The round-off margin below zero is relative, because the
+        # eigenvalues scale with the data; on exact points the true
+        # eigenvalue is 0 and rounding decides its sign.
+        scale = float(np.max(np.abs(eigenvalues.real))) or 1.0
+        positive_indices = [
+            i for i, val in enumerate(eigenvalues.real) if val > -1e-12 * scale
+        ]
 
         if len(positive_indices) == 0:
-            raise ValueError("No positive eigenvalues found - fitting failed")
+            report_degenerate("QI", "no_eigenvalue", "no positive eigenvalue")
+            return NO_CIRCLE_CENTER(), NO_RADIUS
 
         # Find index of smallest positive eigenvalue
         min_idx = positive_indices[
@@ -238,14 +270,13 @@ def qi_2024(edgels, epsilon=1e-6, max_iterations=500, k0=1.5, k1=2.5):
         ]
         xi = eigenvectors[:, min_idx].real
 
-        # Normalize by setting first coefficient (A) to 1
-        xi = xi / xi[0]
+        xi = _normalize(xi, N_H)
 
         # Calculate algebraic residuals
         residuals = X @ xi
 
         # Update weights using robust Huber function
-        W = np.diag(_update_weights(residuals, k0=k0, k1=k1))
+        w = _update_weights(residuals, k0=k0, k1=k1)
 
         # Check convergence
         error = np.linalg.norm(xi - xi_prev)
